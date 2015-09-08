@@ -1,0 +1,335 @@
+# radula
+
+radula is a small utility to add some friendliness to [RadosGW](http://ceph.com/docs/master/man/8/radosgw/) for our team working with [Ceph](http://ceph.com/) for S3-like storage. Little more than a wrapper for [boto](http://boto.readthedocs.org/en/latest/) radula saves us time and headache by using nice defaults.
+
+The primary functions for the current version are
+
+- Inspect radosgw bucket/key ACLs
+- Spot differences between bucket and key ACLs
+- Allow or disallow user read/write to buckets and keys
+- When modifying a bucket ACL, modify the ACLs for keys as well
+- Verify uploads using checksums
+- Upload using multiple threads
+
+The name, "radula", is a [cephalopod-related term](https://en.wikipedia.org/wiki/Radula#In_cephalopods) that hit close to RADOS. It's not a tongue, or really even teeth; it's more like if your tongue had teeth. Spooky.
+
+
+## Installation
+
+Install radula from [pypi](https://pypi.python.org/pypi) using `pip`.
+
+```
+pip install -i radula
+```
+
+The `radula` command should be available in your `$PATH`.
+
+## Configure
+
+radula uses *boto*, so all configuration is really [boto configuration](http://boto.readthedocs.org/en/latest/s3_tut.html). Notable changes are replacing the url to amazon aws with that of one of your gateways. Where  applicable, you may have to disable SSL as a default option.
+
+```
+# example shared /etc/boto.cfg
+[s3]
+host = radosgw1.your_company.com
+
+[Boto]
+is_secure = False
+```
+
+
+## Usage
+
+The command structure for radula is `radula [flags] command subject [target]`. The "subject" matter or "target" of a request could be a local resource or a remote one, depending on the command being executed. These could be read as "source" and "destination" in some cases, but the intent is simply to flow left to right.
+
+```
+$ radula -h
+usage: radula [-h] [--version] [-r] [-w] [-t THREADS]
+              [{get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,rm,remove,keys,info,local-md5,remote-md5,verify}]
+              [subject] [target]
+
+RadosGW client
+
+positional arguments:
+  {get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,rm,remove,keys,info,local-md5,remote-md5,verify}
+                        command
+  subject               Subject
+  target                Target
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --version             Prints version number
+  -r, --read            During a user grant, permission includes reads
+  -w, --write           During a user grant, permission includes writes
+  -t THREADS, --threads THREADS
+                        Number of threads to use for uploads. Default=5
+```
+
+## Examples
+
+This is a quick walkthrough of the features so far. In these scenarios, we acting as the user `bibby`, 
+who owns the rados bucket `mybucket`. In some of the examples, 
+we'll be manipulating the access to this bucket for a second user called `fred`.
+
+Contained in the bucket are two regular files: `hello` and `world`.
+
+
+### Displaying bucket ACL
+```
+[bibby@machine ~]$ radula get-acl mybucket
+ACL for bucket: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+```
+
+The command `get-acl` prints the acl. radula assumed that the term `mybucket` was a bucket, being that it was a lone term.
+
+### Displaying key ACL
+```
+[bibby@machine ~]$ radula get-acl mybucket/hello
+ACL for key: mybucket/hello
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+```
+
+Because the term contained a slash, the subject is correctly identified as `hello` within the bucket `mybucket`.
+
+
+### Comparing ACLs - Keys in bucket
+
+```
+[bibby@machine ~]$ radula compare-acl mybucket
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+---------
+
+Keys with identical ACL: 2
+Keys with different ACL: 0
+```
+
+The `compare-acl` command on a bucket will report of the _sameness_ of ACLs across the keys as compared to the bucket. We'll see this again later in another example.
+
+This _can_ be run against one key, limiting the compared objects to the one key against its bucket
+
+```
+[bibby@machine ~]$ radula check-acl mybucket/hello
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+---------
+
+Keys with identical ACL: 1
+Keys with different ACL: 0
+```
+
+### Sync ACLs
+
+Should a difference of ACL had appeared, we could forcefully replace all key ACLs with the bucket's ACL using `sync-acl`.
+
+```
+[bibby@machine ~]$ radula sync-acl mybucket
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+---------
+
+Setting bucket's ACL on hello
+Setting bucket's ACL on world
+```
+
+This is a `PUT` command, so it doesn't bother to look at the current ACL for the keys; it just puts a copy of the bucket's own ACL.
+
+`sync-acl` can be done on a single key as well.
+
+```
+[bibby@machine ~]$ radula sync-acl mybucket/world
+Setting bucket's ACL on world
+```
+
+### Granting access to a key
+
+To grant access to another user, we'll make use of some new flags. `-r` and/or `-w` to indicate read and write. A grant may have one or both of `rw`. 
+If both are absent, `read` is assumed.
+Permissions are separate, so it is possible to have a _write-only_ grant.
+
+For permission grants the *subject* is the **user** (as far as the usage format in the help text goes), and the *target* is the **key or bucket**.
+
+```
+[bibby@machine ~]$ radula allow fred mybucket/hello
+granting READ to fred on key hello
+```
+
+Multiple grants to the same user for the same permission are possible in rados and on s3, 
+but radula will guard against that and ignore the duplicate entry. 
+Here, we'll add "read-write":
+
+```
+[bibby@machine ~]$ radula -wr allow fred mybucket/hello
+User fred already has READ for key hello, skipping
+granting WRITE to fred on key hello
+```
+
+### Granting access to a bucket
+
+Granting access to a bucket works the same way.  
+When a bucket ACL is modified, **so are all of its keys**. That action is really the whole purpose behind radula.
+
+```
+[bibby@machine ~]$ radula -wr allow fred mybucket
+granting READ to fred on bucket mybucket
+granting WRITE to fred on bucket mybucket
+User fred already has READ for key <Key: mybucket,hello>, skipping
+User fred already has WRITE for key <Key: mybucket,hello>, skipping
+granting READ to fred on key <Key: mybucket,world>
+granting WRITE to fred on key <Key: mybucket,world>
+```
+
+With both `allow` and `disallow`, if an ACL difference exists between the bucket and a key, 
+that difference may still exist after the modification. 
+With these commands, we aren't **syncing** a modified bucket ACL down to the keys; 
+we're applying the same singular change to each target individually.
+
+### Disallow (buckets and keys)
+
+Removing permissions works similarly to granting access, but with some differences. 
+One assumption is about the omission of the read-write flags; If neither are present, both permissions are removed.
+
+start | flags | result
+---|---|---
+RW | -r | W
+RW | -w | R
+RW | -rw | -
+RW | - | -
+
+ACLs for the keys are modified first. The user's access cannot be taken away from the bucket 
+if it still exists for one of its keys, so the changes take place from bottom up.
+
+### Creating an difference and syncing down
+
+Starting with a blank slate:
+
+```
+[bibby@machine ~]$ radula -wr disallow fred mybucket
+No change for <Key: mybucket,hello>
+No change for <Key: mybucket,world>
+No change for mybucket
+```
+
+Give `fred` read on the bucket
+
+```
+[bibby@machine ~]$ radula -r allow fred mybucket
+granting READ to fred on bucket mybucket
+granting READ to fred on key <Key: mybucket,hello>
+granting READ to fred on key <Key: mybucket,world>
+```
+
+Give `fred` write on one key
+
+```
+[bibby@machine ~]$ radula -w allow fred mybucket/world
+granting WRITE to fred on key world
+```
+
+Confirm the difference..
+
+```
+[bibby@machine ~]$ radula compare-acl mybucket
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+[CanonicalUser] Fred Fredricks = READ
+---------
+
+Difference in world:
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+[CanonicalUser] Fred Fredricks = READ
+[CanonicalUser] Fred Fredricks = WRITE
+
+Keys with identical ACL: 1
+Keys with different ACL: 1
+```
+
+Plow the keys with the bucket's settings.
+
+```
+[bibby@machine ~]$ radula sync-acl mybucket
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+[CanonicalUser] Fred Fredricks = READ
+---------
+
+Setting bucket's ACL on hello
+Setting bucket's ACL on world
+
+[bibby@machine ~]$ radula check-acl mybucket                                                                                              
+Bucket ACL for: mybucket
+[CanonicalUser:OWNER] Andrew Bibby = FULL_CONTROL
+[CanonicalUser] Fred Fredricks = READ
+---------
+
+Keys with identical ACL: 2
+Keys with different ACL: 0
+```
+
+## Upload and Download
+
+These functions are similar for moving files in and out of the radosgw. Its intention is not to replace better tools like `s3cmd`, but rather to cover some very common use cases so that the installation and configuration of additional libraries *might* not be needed.
+
+### put, up, upload
+
+The commands `put`, `up`, and `upload` are equivalent. For these examples, I've chosen to use `up`.
+
+The syntax is `radula up {source} {target}`, where *source* is a local file or a glob. The *target* is a in radosgw path, and its behavior depends on the singularity or plurality of the source given.
+
+If the target path ends with a slash (`/`), then the key is presumed to be the basename of the object appended at that path. *See table below.*
+
+If multiple source files are given, the key will always assume it is part of a path, making an ending slash wholly optional.
+
+When using globs, it's important to know that the argument must be quoted to avoid shell expansion. For example to upload all files starting with the letter `a` from `path`, the command would be
+
+    radula up 'path/a*' bucket/path
+
+
+source | target | result
+---|---|---
+/some/file | bucket | bucket/file
+/some/file | bucket/file | bucket/file
+/some/file | bucket/named | bucket/named
+/some/file | bucket/named/ | bucket/named/file
+/some/f* | bucket/named | bucket/named/file, bucket/named/file2
+/some/f* | bucket/named/ | bucket/named/file, bucket/named/file2
+
+For faster multipart uploads, the default number of threads used is `5`, but this can be set during upload using the `-t` option.
+
+    # upload a large file using 10 threads
+    radula -t 10 up large_file bucket
+
+
+### get, dl, download
+
+The commands `get`, `dl`, and `downlaod` are equivalent. For these examples, I've chosen to use `dl`.
+
+The the syntax is `radula dl {source} [{target}]`. The *target* is optional, and will default to the basename of the remote file to be stored in the current working directory.
+
+Unlike `up`, the download commands to not support globs (ain't nobody got time for that).
+
+source | target | result
+---|---|---
+bucket/path/file |  | ./file
+bucket/path/file | some_file | ./some_file
+bucket/path/file | dir | dir/file
+bucket/path/file | dir/named | dir/named
+
+No attempt is made to create local paths that do not exist prior to download; in the table above `dir` is an existing directory.
+
+If a file with the target name already exists, `radula` will ask if you wish to overwrite it.
+
+### verify uploads
+
+Checksums can be obtained using `local-md5` and `remote-md5`, and easily compared with `verify`.
+
+The `local-md5` command expects one local file argument, and will generate the same hash that is expected to be found on the remote.
+Multipart upload size matters, so the output hash may differ if uploaded by another mechanism.
+
+The `remote-md5` command expects one remote file uri, ie *mybucket/path/myfile*. It will return the `etag` attribute associated with
+the key, which will typically be a file md5 or conglomeration of multipart upload hashs with a number tacked at the end.
+
+Calling `verify [local_file] [remote_file]` simply runs the operations mentioned above and tests their outputs for likeness.
+
+To view raw metadata about a remote target, use `info [remote_file]`. The output will contain the etag and other data in JSON format.
