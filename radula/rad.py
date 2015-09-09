@@ -344,6 +344,9 @@ class RadulaLib(RadulaClient):
 
         return chunk_count, chunk_size, tiny_size
 
+    def url_for(self, key):
+        return key.generate_url(expires_in=0, query_auth=False)
+
     def _start_upload(self, source_path, bucket, key_name):
         max_tries = 5
         num_processes = self.upload_threads
@@ -361,6 +364,7 @@ class RadulaLib(RadulaClient):
             t2 = time.time() - t1
             s = source_size/1024./1024.
             logger.info("Finished uploading %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
+            logger.info("Download URL: {url}".format(url=self.url_for(k)))
             return
 
         mpu = bucket.initiate_multipart_upload(key_name)
@@ -396,6 +400,7 @@ class RadulaLib(RadulaClient):
             key = bucket.get_key(key_name)
             key.set_acl(bucket.get_acl())
             logger.info("Finished uploading %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
+            logger.info("Download URL: {url}".format(url=self.url_for(key)))
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, canceling upload")
             if pool:
