@@ -1,4 +1,5 @@
 import os
+import sys
 import fnmatch
 import time
 import logging
@@ -507,9 +508,11 @@ class RadulaLib(RadulaClient):
         remote_md5 = self.remote_md5(target)
 
         if local_md5 == remote_md5:
-            return "Verified!\nLocal and remote targets @ {0}".format(local_md5)
+            print "Verified!\nLocal and remote targets @ {0}".format(local_md5)
+            return True
         else:
-            return "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}".format(local_md5, remote_md5)
+            print >> sys.stderr, "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}".format(local_md5, remote_md5)
+            return False
 
 
 def do_part_upload(args):

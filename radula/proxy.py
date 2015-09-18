@@ -113,4 +113,5 @@ class RadulaProxy(object):
         if not target:
             raise RadulaError("Missing remote target to compare")
 
-        print self.lib.verify(subject, target)
+        if not self.lib.verify(subject, target):
+            exit(1)
