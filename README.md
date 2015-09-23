@@ -44,14 +44,14 @@ The command structure for radula is `radula [flags] command subject [target]`. T
 
 ```
 $ radula -h
-usage: radula [-h] [--version] [-r] [-w] [-t THREADS]
-              [{get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,rm,remove,keys,info,local-md5,remote-md5,verify}]
+usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
+              [{get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify}]
               [subject] [target]
 
 RadosGW client
 
 positional arguments:
-  {get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,rm,remove,keys,info,local-md5,remote-md5,verify}
+  {get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify}
                         command
   subject               Subject
   target                Target
@@ -62,7 +62,9 @@ optional arguments:
   -r, --read            During a user grant, permission includes reads
   -w, --write           During a user grant, permission includes writes
   -t THREADS, --threads THREADS
-                        Number of threads to use for uploads. Default=5
+                        Number of threads to use for uploads. Default=10
+  -p PROFILE, --profile PROFILE
+                        Boto profile. Overrides AWS_PROFILE environment var
 ```
 
 ## Examples
@@ -333,3 +335,36 @@ the key, which will typically be a file md5 or conglomeration of multipart uploa
 Calling `verify [local_file] [remote_file]` simply runs the operations mentioned above and tests their outputs for likeness.
 
 To view raw metadata about a remote target, use `info [remote_file]`. The output will contain the etag and other data in JSON format.
+
+## Cleaning up messes
+
+If multipart uploads go awry, they can leave behind some unfinished artifacts in the form of orphaned upload parts. 
+`radula` can now list these can clean up. 
+
+The commands `multipart-list`, `mp-list`, and `mpl` are equivalent. For these examples, I've chosen to use `mp-list`.
+
+Listing can be done by bucket or for a key:
+
+    # list multipart uploads for a bucket
+    $ radula mp-list mybucket
+    bibby    ones.img        2~Q8r-pWTmMTbx_rhHa8-u3I3m-vjCF5F       Andrew Bibby    2015-09-23T19:39:14.000Z
+    bibby    zeros.img       2~MvM7KTr2sMcS_SfVzWO7T0chzJRUqvm       Andrew Bibby    2015-09-23T19:35:44.000Z
+    
+    # list multipart uploads for a key
+    $ radula mp-list mybucket/zeros.img
+    bibby    zeros.img       2~MvM7KTr2sMcS_SfVzWO7T0chzJRUqvm       Andrew Bibby    2015-09-23T19:35:44.000Z
+
+Cleaning up a failed multi-part upload is as easy using a *clean* command in place of *list*.
+
+The commands `multipart-clean`, `mp-clean`, and `mpc` are equivalent. For these examples, I've chosen to use `mp-clean`.
+
+    # clean multipart uploads for a key
+    $ radula mp-clean mybucket/zeros.img
+    INFO:root:Canceling zeros.img 2~MvM7KTr2sMcS_SfVzWO7T0chzJRUqvm
+    True
+
+    # clean multipart uploads for a bucket
+    $ radula mp-list mybucket
+    INFO:root:Canceling ones.img 2~Q8r-pWTmMTbx_rhHa8-u3I3m-vjCF5F
+    True
+

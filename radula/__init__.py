@@ -31,6 +31,8 @@ cmd_proxy = [
     'lb', 'list-buckets',
     'put', 'up', 'upload',
     'get', 'dl', 'download',
+    'mpl', 'mp-list', 'multipart-list',
+    'mpc', 'mp-clean', 'multipart-clean',
     'rm', 'remove',
     'keys', 'info',
     'local-md5', 'remote-md5', 'verify'
@@ -47,18 +49,18 @@ def _real_main():
 
     if args.command in cmd_acl:
         radu = Radula()
-        radu.connect()
+        radu.connect(profile=args.profile)
         getattr(radu, command)(**vars(args))
         exit()
 
     if args.command in cmd_usr:
         radu = Radula()
-        radu.connect()
+        radu.connect(profile=args.profile)
         getattr(radu, command)(**vars(args))
         exit()
 
     if args.command in cmd_proxy:
-        radu = RadulaProxy()
+        radu = RadulaProxy(profile=args.profile)
         getattr(radu, command)(**vars(args))
         pass
 
@@ -108,6 +110,12 @@ def _parse_args():
         dest='threads',
         default=default_threads,
         help='Number of threads to use for uploads. Default={0}'.format(default_threads)
+    )
+
+    args.add_argument(
+        '-p', '--profile',
+        dest='profile',
+        help='Boto profile. Overrides AWS_PROFILE environment var'
     )
 
     args.add_argument(

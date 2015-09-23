@@ -22,18 +22,29 @@ class RadulaError(Exception):
 
 
 class RadulaClient(object):
-    DEFAULT_UPLOAD_THREADS = 5
+    DEFAULT_UPLOAD_THREADS = 10
 
     def __init__(self):
         self.conn = None
-        self.upload_threads = RadulaClient.DEFAULT_UPLOAD_THREADS
+        self.profile = None
+        self.thread_count = RadulaClient.DEFAULT_UPLOAD_THREADS
 
-    def connect(self):
+    def connect(self, profile=None):
+        """create or reuse a boto s3 connection.
+        An option aws profile may be given.
+        """
+        if profile:
+            self.profile = profile
+
+        if self.profile:
+            os.environ["AWS_PROFILE"] = self.profile
+
         if not self.conn:
             self.conn = self.new_connection()
         return self.conn
 
     def new_connection(self):
+        """create a fresh boto s3 connection"""
         return boto.connect_s3(calling_format=boto.s3.connection.OrdinaryCallingFormat())
 
 
@@ -43,6 +54,11 @@ class Radula(RadulaClient):
 
     @staticmethod
     def split_bucket(subject):
+        """separate the bucket and key components from
+        a string, such as mybucket/path/to/key.
+        boto objects may also be given, and they already
+        know their constituent pieces.
+        """
         if isinstance(subject, Bucket):
             return subject, None
         if isinstance(subject, Key):
@@ -55,6 +71,8 @@ class Radula(RadulaClient):
         return tuple(s)
 
     def get_acl(self, **kwargs):
+        """fetch a description of the ACL policy
+        on a subject bucket or key"""
         subject = kwargs.get("subject", None)
         if not subject:
             raise RadulaError("Subject (bucket/key) is needed")
@@ -76,6 +94,7 @@ class Radula(RadulaClient):
 
     @staticmethod
     def format_policy(policy):
+        """format a ACL object to a readable string"""
         grants = []
         for g in policy.acl.grants:
             grant_type = g.type
@@ -156,6 +175,7 @@ class Radula(RadulaClient):
             key.set_acl(policy)
 
     def allow(self, **kwargs):
+        """alias of allow_user"""
         self.allow_user(**kwargs)
 
     def allow_user(self, **kwargs):
@@ -213,6 +233,7 @@ class Radula(RadulaClient):
                 self.allow_user(**kwargs_copy)
 
     def disallow(self, **kwargs):
+        """alias of disallow_user"""
         self.disallow_user(**kwargs)
 
     def disallow_user(self, **kwargs):
@@ -290,6 +311,7 @@ class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
 
     def make_bucket(self, bucket):
+        """proxy make_bucket in boto"""
         for existing_bucket in self.conn.get_all_buckets():
             if bucket == existing_bucket.name:
                 print "Bucket {0} already exists.".format(bucket)
@@ -298,16 +320,20 @@ class RadulaLib(RadulaClient):
         return self.conn.create_bucket(bucket)
 
     def remove_bucket(self, bucket):
+        """proxy delete_bucket in boto"""
         return self.conn.delete_bucket(bucket)
 
     def get_buckets(self):
+        """proxy get_all_buckets in boto"""
         return self.conn.get_all_buckets()
 
     def remove_key(self, subject):
+        """proxy delete_key in boto"""
         bucket, key = Radula.split_bucket(subject)
         self.conn.get_bucket(bucket).delete_key(key)
 
     def upload(self, subject, target):
+        """initiate multipart uploads of potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
         bucket = self.conn.get_bucket(bucket_name)
         files = glob(subject)
@@ -323,13 +349,17 @@ class RadulaLib(RadulaClient):
             elif key_name[-1] == "/":
                 key_name = "".join([key_name, basename])
 
-            self._start_upload(source_path, bucket, key_name)
+            if not self._start_upload(source_path, bucket, key_name):
+                raise RadulaError("{0} did not correctly upload".format(source_path))
 
     def _file_size(self, src):
+        """quick file sizing"""
         src.seek(0, 2)
         return src.tell()
 
     def _chunk(self, source_size):
+        """generate a chunk count and size for a large file.
+        tiny_size is also calculated for last-part folding"""
         _mb = 1024 * 1024
         _gb = _mb * 1024
         tiny_size = 25 * _mb
@@ -346,12 +376,15 @@ class RadulaLib(RadulaClient):
         return chunk_count, chunk_size, tiny_size
 
     def url_for(self, key):
+        """proxy generate_url in boto.Key"""
         return key.generate_url(expires_in=0, query_auth=False)
 
     def _start_upload(self, source_path, bucket, key_name):
+        """multipart upload strategy.
+        Borrowed heavily from the work of David Arthur
+        https://github.com/mumrah/s3-multipart
+        """
         max_tries = 5
-        num_processes = self.upload_threads
-
         src = open(source_path, 'rb')
         source_size = self._file_size(src)
 
@@ -366,22 +399,20 @@ class RadulaLib(RadulaClient):
             s = source_size/1024./1024.
             logger.info("Finished uploading %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
             logger.info("Download URL: {url}".format(url=self.url_for(k)))
-            return
+            return self.verify(source_path, k)
 
         mpu = bucket.initiate_multipart_upload(key_name)
         logger.info("Initialized upload: %s" % mpu.id)
 
         # Generate arguments for invocations of do_part_upload
-        def gen_args(num_parts, fold_last_chunk):
-            for i in range(num_parts):
+        def gen_args(num, fold_last_chunk):
+            for i in range(num):
                 chunk_start = chunk_size * i
                 s3 = self.new_connection()
-
-                if i == (num_parts-1) and fold_last_chunk is True:
-                    yield (s3, bucket.name, mpu.id, src.name, i, chunk_start, chunk_size * 2, max_tries, 0)
-                    break
-                else:
-                    yield (s3, bucket.name, mpu.id, src.name, i, chunk_start, chunk_size, max_tries, 0)
+                args = (s3, bucket.name, mpu.id, src.name, i, chunk_start, chunk_size, max_tries, 0)
+                if i == (num-1) and fold_last_chunk is True:
+                    args[6] = chunk_size * 2
+                yield args
 
         # If the last part is small, just fold it into the previous part
         fold_last = ((source_size % chunk_size) < tiny_size)
@@ -389,7 +420,7 @@ class RadulaLib(RadulaClient):
         pool = None
         try:
             # Create a pool of workers
-            pool = Pool(processes=num_processes)
+            pool = Pool(processes=self.thread_count)
             t1 = time.time()
             pool.map_async(do_part_upload, gen_args(num_parts, fold_last)).get(9999999)
             # Print out some timings
@@ -402,6 +433,9 @@ class RadulaLib(RadulaClient):
             key.set_acl(bucket.get_acl())
             logger.info("Finished uploading %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
             logger.info("Download URL: {url}".format(url=self.url_for(key)))
+
+            # Verify upload
+            return self.verify(source_path, key)
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, canceling upload")
             if pool:
@@ -411,7 +445,8 @@ class RadulaLib(RadulaClient):
             logger.error("Encountered an error, canceling upload")
             logger.error(err)
 
-    def download(self, subject, target):
+    def download(self, subject, target, force=False):
+        """proxy download in boto, warning user about overwrites"""
         basename = os.path.basename(subject)
         if not target:
             target = basename
@@ -419,7 +454,7 @@ class RadulaLib(RadulaClient):
         if os.path.isdir(target):
             target = "/".join([target, basename])
 
-        if os.path.isfile(target):
+        if os.path.isfile(target) and not force:
             msg = "File {0} exists already. Overwrite? [yN]: ".format(target)
             if not raw_input(msg).lower() == 'y':
                 print "Aborting configuration."
@@ -442,16 +477,17 @@ class RadulaLib(RadulaClient):
         boto_key.get_contents_to_filename(target, cb=progress_callback, num_cb=self.PROGRESS_CHUNKS)
 
     def keys(self, subject):
+        """list keys in a bucket with consideration of glob patterns if provided"""
         bucket_name, pattern = Radula.split_bucket(subject)
 
         bucket = self.conn.get_bucket(bucket_name)
         if not pattern:
             return [key.name for key in bucket]
 
-        def key_buffer(bucket, buffer_size=256):
+        def key_buffer(buck, buffer_size=256):
             buffer_keys = []
-            for key in bucket:
-                buffer_keys.append(key.name)
+            for k in buck:
+                buffer_keys.append(k.name)
                 if len(buffer_keys) >= buffer_size:
                     filtered_keys = fnmatch.filter(buffer_keys, pattern)
                     if len(filtered_keys):
@@ -465,37 +501,46 @@ class RadulaLib(RadulaClient):
         return keys
 
     def info(self, subject):
+        """fetch metadata of a remote subject key"""
         bucket_name, key_name = Radula.split_bucket(subject)
         bucket = self.conn.get_bucket(bucket_name)
         key = bucket.get_key(key_name)
         return key.__dict__
 
     def remote_md5(self, subject):
+        """fetch hash from metadata of a remote subject key"""
         bucket_name, key_name = Radula.split_bucket(subject)
         bucket = self.conn.get_bucket(bucket_name)
         key = bucket.get_key(key_name)
         return key.etag.translate(None, '"')
 
     def local_md5(self, subject):
+        """performs a multithreaded hash of a local subject file"""
         if not os.path.isfile(subject):
             raise RadulaError("Local file '{0}' not found".format(subject))
-        key = Key()
-        parts = []
         hash_obj = md5()
 
-        with open(subject, 'rb') as f:
-            source_size = self._file_size(f)
+        with open(subject, 'rb') as source_file:
+            source_size = self._file_size(source_file)
             num_parts, chunk_size, tiny_size = self._chunk(source_size)
+            key = Key()
 
             if num_parts == 1:
-                f.seek(0)
-                hash_obj.update(f.read(source_size))
+                source_file.seek(0)
+                hash_obj.update(source_file.read(source_size))
             else:
-                for i in xrange(0, num_parts):
-                    start = chunk_size * i
-                    f.seek(start)
-                    hex_digest, b64_digest = key.compute_md5(f, size=chunk_size)
-                    parts.append(binascii.unhexlify(str(hex_digest)))
+                def gen_args(num):
+                    for n in xrange(num):
+                        yield (subject, n, chunk_size, key)
+
+                pool = Pool(processes=self.thread_count)
+                t1 = time.time()
+                parts = pool.map_async(do_part_cksum, gen_args(num_parts)).get(9999999)
+                # Print out some timings
+                t2 = time.time() - t1
+
+                s = source_size/1024./1024.
+                logger.info("Finished hashing %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
                 hash_obj.update(''.join(parts))
 
         hex_digest = hash_obj.hexdigest()
@@ -504,15 +549,54 @@ class RadulaLib(RadulaClient):
         return '{0}-{1}'.format(hex_digest, num_parts)
 
     def verify(self, subject, target):
+        """compares hashes of a local subject and a remote target"""
         local_md5 = self.local_md5(subject)
         remote_md5 = self.remote_md5(target)
 
         if local_md5 == remote_md5:
-            print "Verified!\nLocal and remote targets @ {0}".format(local_md5)
+            logging.info("Checksum Verified!")
+            logging.info("Local and remote targets @ {0}".format(local_md5))
             return True
         else:
+            logging.error("LocalMD5: {0} ; RemoteMD5: {1}".format(local_md5, remote_md5))
             print >> sys.stderr, "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}".format(local_md5, remote_md5)
             return False
+
+    def multipart_list(self, subject, return_list=False):
+        """lists lingering multipart upload parts """
+        bucket_name, key_name = Radula.split_bucket(subject)
+        bucket = self.conn.get_bucket(bucket_name)
+
+        lines = []
+        uploads = bucket.list_multipart_uploads()
+        if key_name:
+            uploads = [up for up in uploads if up.key_name == key_name]
+
+        if return_list:
+            return bucket, uploads
+
+        for up in uploads:
+            lines.append("\t".join((up.bucket.name, up.key_name, up.id, up.initiator.display_name, up.initiated)))
+
+        return "\n".join(lines)
+
+    def multipart_clean(self, subject):
+        """alias of multipart_clean"""
+        bucket, uploads = self.multipart_list(subject, return_list=True)
+        for up in uploads:
+            logging.info("Canceling {0} {1}".format(up.key_name, up.id))
+            bucket.cancel_multipart_upload(up.key_name, up.id)
+        return True
+
+
+def do_part_cksum(args):
+    """hash one chunk of a local file.
+    Several parts are run simultaneously."""
+    subject, n, chunk_size, key = args
+    with open(subject, 'rb') as source_file:
+        source_file.seek(chunk_size * n)
+        hex_digest, b64_digest = key.compute_md5(source_file, size=chunk_size)
+    return binascii.unhexlify(str(hex_digest))
 
 
 def do_part_upload(args):
@@ -531,7 +615,6 @@ def do_part_upload(args):
                  The arguments are: S3 Bucket name, MultiPartUpload id, file
                  name, the part number, part offset, part size
     """
-    # Multiprocessing args lameness
     s3, bucket_name, mpu_id, filename, i, start, size, max_tries, current_tries = args
     logger.debug("do_part_upload got args: %s" % (args,))
 
