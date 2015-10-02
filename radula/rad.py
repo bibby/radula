@@ -332,7 +332,7 @@ class RadulaLib(RadulaClient):
         bucket, key = Radula.split_bucket(subject)
         self.conn.get_bucket(bucket).delete_key(key)
 
-    def upload(self, subject, target):
+    def upload(self, subject, target, verify=False):
         """initiate multipart uploads of potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
         bucket = self.conn.get_bucket(bucket_name)
@@ -349,7 +349,7 @@ class RadulaLib(RadulaClient):
             elif key_name[-1] == "/":
                 key_name = "".join([key_name, basename])
 
-            if not self._start_upload(source_path, bucket, key_name):
+            if not self._start_upload(source_path, bucket, key_name, verify):
                 raise RadulaError("{0} did not correctly upload".format(source_path))
 
     def _file_size(self, src):
@@ -379,7 +379,7 @@ class RadulaLib(RadulaClient):
         """proxy generate_url in boto.Key"""
         return key.generate_url(expires_in=0, query_auth=False)
 
-    def _start_upload(self, source_path, bucket, key_name):
+    def _start_upload(self, source_path, bucket, key_name, verify=False):
         """multipart upload strategy.
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
@@ -409,10 +409,10 @@ class RadulaLib(RadulaClient):
             for i in range(num):
                 chunk_start = chunk_size * i
                 s3 = self.new_connection()
-                args = (s3, bucket.name, mpu.id, src.name, i, chunk_start, chunk_size, max_tries, 0)
+                args = [s3, bucket.name, mpu.id, src.name, i, chunk_start, chunk_size, max_tries, 0, num]
                 if i == (num-1) and fold_last_chunk is True:
                     args[6] = chunk_size * 2
-                yield args
+                yield tuple(args)
 
         # If the last part is small, just fold it into the previous part
         fold_last = ((source_size % chunk_size) < tiny_size)
@@ -434,16 +434,32 @@ class RadulaLib(RadulaClient):
             logger.info("Finished uploading %0.2fM in %0.2fs (%0.2fMBps)" % (s, t2, s/t2))
             logger.info("Download URL: {url}".format(url=self.url_for(key)))
 
+            if not verify:
+                return True
+
             # Verify upload
             return self.verify(source_path, key)
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, canceling upload")
-            if pool:
-                pool.terminate()
-            mpu.cancel_upload()
-        except Exception, err:
+            try:
+                if pool:
+                    pool.terminate()
+                mpu.cancel_upload()
+            except:
+                logger.error("Error while cancelling upload")
+                logger.error()
+            raise
+        except:
+            exc_class, exc, tb = sys.exc_info()
             logger.error("Encountered an error, canceling upload")
-            logger.error(err)
+            logger.error(exc)
+            try:
+                if pool:
+                    pool.terminate()
+                mpu.cancel_upload()
+            except:
+                logger.error("Error while cancelling upload")
+            raise
 
     def download(self, subject, target, force=False):
         """proxy download in boto, warning user about overwrites"""
@@ -457,7 +473,7 @@ class RadulaLib(RadulaClient):
         if os.path.isfile(target) and not force:
             msg = "File {0} exists already. Overwrite? [yN]: ".format(target)
             if not raw_input(msg).lower() == 'y':
-                print "Aborting configuration."
+                print "Aborting download."
                 exit(0)
 
         bucket, key = Radula.split_bucket(subject)
@@ -615,7 +631,7 @@ def do_part_upload(args):
                  The arguments are: S3 Bucket name, MultiPartUpload id, file
                  name, the part number, part offset, part size
     """
-    s3, bucket_name, mpu_id, filename, i, start, size, max_tries, current_tries = args
+    s3, bucket_name, mpu_id, filename, i, start, size, max_tries, current_tries, num_parts = args
     logger.debug("do_part_upload got args: %s" % (args,))
 
     bucket = s3.lookup(bucket_name)
@@ -646,12 +662,15 @@ def do_part_upload(args):
         # Print some timings
         t2 = time.time() - t1
         s = len(data)/1024./1024.
-        logger.info("Uploaded part %s (%0.2fM) in %0.2fs at %0.2fMBps" % (i+1, s, t2, s/t2))
-    except Exception, err:
+        logger.info("Uploaded part %s of %s (%0.2fM) in %0.2fs at %0.2fMBps" % (i+1, num_parts, s, t2, s/t2))
+    except:
+        exc_class, exc, tb = sys.exc_info()
         logger.debug("Retry request %d of max %d times" % (current_tries, max_tries))
         if current_tries > max_tries:
-            logger.error(err)
+            logger.error(exc)
+            raise exc
         else:
-            time.sleep(3)
             current_tries += 1
-            do_part_upload((s3, bucket_name, mpu_id, filename, i, start, size, max_tries, current_tries))
+            logger.warn("Error while uploading. Attempting retry #{0} of {1}".format(current_tries, max_tries))
+            time.sleep(3)
+            do_part_upload((s3, bucket_name, mpu_id, filename, i, start, size, max_tries, current_tries, num_parts))

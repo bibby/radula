@@ -84,13 +84,6 @@ def _parse_args():
     )
 
     args.add_argument(
-        'command',
-        nargs='?',
-        help='command',
-        choices=commands
-    )
-
-    args.add_argument(
         '-r', '--read',
         dest='acl_read',
         action='store_true',
@@ -119,6 +112,27 @@ def _parse_args():
     )
 
     args.add_argument(
+        '-f', '--force',
+        dest='force',
+        action='store_true',
+        help='Overwrite local files without confirmation'.format(default_threads)
+    )
+
+    args.add_argument(
+        '-y', '--verify',
+        dest='verify',
+        action='store_true',
+        help='Verify uploads after they complete'.format(default_threads)
+    )
+
+    args.add_argument(
+        'command',
+        nargs='?',
+        help='command',
+        choices=commands
+    )
+
+    args.add_argument(
         'subject',
         nargs='?',
         action='store',
@@ -132,7 +146,11 @@ def _parse_args():
         help='Target'
     )
 
-    return args.parse_args(sys.argv[1:])
+    options = args.parse_args(sys.argv[1:])
+    if not options.command and not options.version:
+        args.print_help()
+        exit()
+    return options
 
 
 def main():

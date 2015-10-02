@@ -59,7 +59,7 @@ class RadulaProxy(object):
             raise RadulaError("Missing bucket/key target")
 
         self.lib.upload_threads = int(kwargs.get("threads"))
-        self.lib.upload(subject, target)
+        self.lib.upload(subject, target, verify=kwargs.get("verify", False))
 
     def get(self, **kwargs):
         """alias of download"""
@@ -74,9 +74,9 @@ class RadulaProxy(object):
         subject = kwargs.get("subject", None)
         target = kwargs.get("target", None)
         if not subject:
-            raise RadulaError("Missing file(s) to upload")
+            raise RadulaError("Missing file(s) to download")
 
-        self.lib.download(subject, target)
+        self.lib.download(subject, target, force=kwargs.get("force", False))
 
     def rm(self, **kwargs):
         """alias of remove"""
@@ -86,7 +86,7 @@ class RadulaProxy(object):
         """removes a remote subject key"""
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing file(s) to upload")
+            raise RadulaError("Missing file(s) to remove")
 
         self.lib.remove_key(subject)
 
@@ -103,7 +103,7 @@ class RadulaProxy(object):
         """prints metadata for a remote subject key"""
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing subject file")
+            raise RadulaError("Missing remote subject key to get info for")
 
         print self.lib.info(subject)
 
@@ -111,7 +111,7 @@ class RadulaProxy(object):
         """performs a multithreaded hash of a local subject file"""
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing subject file")
+            raise RadulaError("Missing local subject file")
 
         self.lib.thread_count = int(kwargs.get("threads"))
         print self.lib.local_md5(subject)
@@ -120,7 +120,7 @@ class RadulaProxy(object):
         """fetches hash from metadata of a remote subject"""
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing subject file")
+            raise RadulaError("Missing remote subject key")
 
         print self.lib.remote_md5(subject)
 
@@ -149,7 +149,7 @@ class RadulaProxy(object):
         """lists lingering multipart upload parts """
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing local subject to compare")
+            raise RadulaError("Missing remote subject bucket or key to list")
         print self.lib.multipart_list(subject)
 
     def mpc(self, **kwargs):
@@ -164,5 +164,5 @@ class RadulaProxy(object):
         """removes lingering multipart upload parts for a remote bucket or key"""
         subject = kwargs.get("subject", None)
         if not subject:
-            raise RadulaError("Missing local subject to compare")
+            raise RadulaError("Missing remote subject bucket or key to clean")
         print self.lib.multipart_clean(subject)

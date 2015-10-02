@@ -65,6 +65,8 @@ optional arguments:
                         Number of threads to use for uploads. Default=10
   -p PROFILE, --profile PROFILE
                         Boto profile. Overrides AWS_PROFILE environment var
+  -f, --force           Overwrite local files without confirmation
+  -y, --verify          Verify uploads after they complete
 ```
 
 ## Examples
@@ -302,6 +304,7 @@ For faster multipart uploads, the default number of threads used is `5`, but thi
     # upload a large file using 10 threads
     radula -t 10 up large_file bucket
 
+Upload verification via checksum can be enabled by adding the `-y`, `--verify` flag.
 
 ### get, dl, download
 
@@ -320,7 +323,7 @@ bucket/path/file | dir/named | dir/named
 
 No attempt is made to create local paths that do not exist prior to download; in the table above `dir` is an existing directory.
 
-If a file with the target name already exists, `radula` will ask if you wish to overwrite it.
+If a file with the target name already exists, `radula` will ask if you wish to overwrite it unless the `-f`, `--force` flag is enabled.
 
 ### verify uploads
 
