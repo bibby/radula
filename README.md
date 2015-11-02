@@ -26,7 +26,9 @@ The `radula` command should be available in your `$PATH`.
 
 ## Configure
 
-radula uses *boto*, so all configuration is really [boto configuration](http://boto.readthedocs.org/en/latest/s3_tut.html). Notable changes are replacing the url to amazon aws with that of one of your gateways. Where  applicable, you may have to disable SSL as a default option.
+radula uses *boto*, so all configuration is really [boto configuration](http://boto.readthedocs.org/en/latest/s3_tut.html). 
+Notable changes are replacing the url to amazon aws with that of one of your gateways. 
+Where applicable, you may have to disable SSL as a default option.
 
 ```
 # example shared /etc/boto.cfg
@@ -37,21 +39,37 @@ host = radosgw1.your_company.com
 is_secure = False
 ```
 
+To add your personal credentials, fill in the following in `~/.boto`:
+
+```
+[Credentials]
+aws_access_key_id = abcdef...
+aws_secret_access_key = 0123456...
+
+[profile other_role]
+aws_access_key_id = wxyz...
+aws_secret_access_key = 9765432...
+```
 
 ## Usage
 
-The command structure for radula is `radula [flags] command subject [target]`. The "subject" matter or "target" of a request could be a local resource or a remote one, depending on the command being executed. These could be read as "source" and "destination" in some cases, but the intent is simply to flow left to right.
+The command structure for radula is `radula [flags] command subject [target]`. 
+The "subject" matter or "target" of a request could be a local resource or a remote one, depending on the command being executed. These could be read as "source" and "destination" in some cases, but the intent is simply to flow left to right.
 
 ```
 $ radula -h
 usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-              [{get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify}]
+              [-d DESTINATION] [-f] [-y]
+              [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,u
+p,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy
+}]
               [subject] [target]
 
 RadosGW client
 
-positional arguments:
-  {get-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify}
+positional arguments:                                                                                                                      [2/643]
+  {get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,
+dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy}
                         command
   subject               Subject
   target                Target
@@ -65,6 +83,8 @@ optional arguments:
                         Number of threads to use for uploads. Default=10
   -p PROFILE, --profile PROFILE
                         Boto profile. Overrides AWS_PROFILE environment var
+  -d DESTINATION, --destination DESTINATION
+                        Destination boto profile, required for streaming copy
   -f, --force           Overwrite local files without confirmation
   -y, --verify          Verify uploads after they complete
 ```
@@ -109,7 +129,8 @@ Keys with identical ACL: 2
 Keys with different ACL: 0
 ```
 
-The `compare-acl` command on a bucket will report of the _sameness_ of ACLs across the keys as compared to the bucket. We'll see this again later in another example.
+The `compare-acl` command on a bucket will report of the _sameness_ of ACLs across the keys as compared to the bucket.
+We'll see this again later in another example.
 
 This _can_ be run against one key, limiting the compared objects to the one key against its bucket
 
@@ -122,6 +143,20 @@ Bucket ACL for: mybucket
 Keys with identical ACL: 1
 Keys with different ACL: 0
 ```
+
+### Set a canned ACL
+
+Can set the ACL of a bucket or key to one of the four AWS "canned" policies using `set-acl`.
+In this scenario, the *subject* can be a bucket or a key, with the *target* being a canned policy name.
+
+```
+[bibby@machine ~]$ radula set-acl mybucket/hello public-read
+<< prints the output of get-acl after completing the operation
+```
+
+Changing the ACL on a bucket **will** will be applied to the keys as well, potentially overwriting any
+custom access given to keys. Run `compare-acl` before setting the bucket ACL to discover any special differences,
+as they may need to be recreated after the `set-acl` operation completes.
 
 ### Sync ACLs
 
@@ -370,4 +405,50 @@ The commands `multipart-clean`, `mp-clean`, and `mpc` are equivalent. For these 
     $ radula mp-list mybucket
     INFO:root:Canceling ones.img 2~Q8r-pWTmMTbx_rhHa8-u3I3m-vjCF5F
     True
+
+## Streaming Copy
+
+Since radula 0.5.0, users are able to copy between different ceph installations, or different buckets within the same installation, 
+without copying to the local disk. To facilitate this in the friendliest possible manner, 
+we've extended the `boto` configuration slightly to be able to specify a separate s3 host for a particular profile.
+
+The `profile` sections of `~/.boto` or `/etc/boto.cfg` can now accept the following items that are not supported by regular boto:
+
+- host (string)
+- port (int)
+- is_secure (bool)
+
+An example extended profile
+
+```
+[profile second_ceph]
+aws_access_key_id = wxyz...
+aws_secret_access_key = 9765432...
+host = second.ceph.of.mine
+port = 8184
+```
+
+The commans `streaming-copy` and `sc` are equivalent. For these example, I've chosen to use `sc`.
+
+When copying, the `-p` flag will apply the aws_profile for the *source*/subject. Omitting this flag will use the default boto credentials for the source.
+
+The `-d` flag will specify the profile used for the *destination*/target to receive the files. Naming `-d Default` will use the default boto credentials for the destination.
+
+### Copy a file from first-ceph to second-ceph
+
+`radula sc -d second mybucket/file other_bucket/file`
+
+This command used the default boto profile send `file` from `mybucket` located on the default ceph to the ceph defined in the profile named `second`.
+
+### Copy a file from second-ceph to first-ceph
+
+`radula -p second -d Default other_bucket/file mybucket/file`
+
+This is the inverse of the previous example. Using the `second` profile as the source/subject (as specified by `-p second`), we're transfering a file to `mybucket/file` located on the default s3 using the default profile (as specified by `-d Default`).
+
+### Copy profile to profile
+
+Avoiding the use of default profiles all together, you can copy using both `-p` and `-d` flags.
+
+`radula -p here -d there here/stuff there/stuff`
 

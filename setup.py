@@ -2,12 +2,16 @@
 from setuptools import setup, find_packages
 import versioneer
 
+with open('README.rst') as readme:
+    long_description = readme.read()
+
 setup(
     name='radula',
     version=versioneer.get_version(),
     cmdclass=versioneer.get_cmdclass(),
     packages=find_packages(),
     description='RadosGW client for Ceph S3 storage',
+    long_description=long_description,
     author='bibby',
     author_email='andrew.bibby@nantomics.com',
     url='https://github.com/bibby/radula',

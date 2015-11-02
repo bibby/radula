@@ -14,6 +14,7 @@ logging.basicConfig(level=logging.INFO)
 # ACL commands
 cmd_acl = [
     'get-acl',
+    'set-acl',
     'compare-acl',
     'sync-acl'
 ]
@@ -35,7 +36,8 @@ cmd_proxy = [
     'mpc', 'mp-clean', 'multipart-clean',
     'rm', 'remove',
     'keys', 'info',
-    'local-md5', 'remote-md5', 'verify'
+    'local-md5', 'remote-md5', 'verify',
+    'sc', 'streaming-copy'
 ]
 
 
@@ -109,6 +111,12 @@ def _parse_args():
         '-p', '--profile',
         dest='profile',
         help='Boto profile. Overrides AWS_PROFILE environment var'
+    )
+
+    args.add_argument(
+        '-d', '--destination',
+        dest='destination',
+        help='Destination boto profile, required for streaming copy'
     )
 
     args.add_argument(

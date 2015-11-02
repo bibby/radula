@@ -166,3 +166,21 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing remote subject bucket or key to clean")
         print self.lib.multipart_clean(subject)
+
+    def sc(self, **kwargs):
+        """alias of streaming-copy"""
+        return self.streaming_copy(**kwargs)
+
+    def streaming_copy(self, **kwargs):
+        """copy from one endpoint to another without touching a disk"""
+        source = kwargs.get("subject", None)
+        dest = kwargs.get("target", None)
+        dest_profile = kwargs.get("destination", None)
+        force = kwargs.get("force", None)
+        verify = kwargs.get("verify", False)
+        if not source:
+            raise RadulaError("missing source bucket/key")
+        if not dest:
+            raise RadulaError("missing destination bucket/key")
+
+        print self.lib.streaming_copy(source, dest, dest_profile, force, verify)
