@@ -19,7 +19,7 @@ The name, "radula", is a [cephalopod-related term](https://en.wikipedia.org/wiki
 Install radula from [pypi](https://pypi.python.org/pypi) using `pip`.
 
 ```
-pip install -i radula
+pip install radula
 ```
 
 The `radula` command should be available in your `$PATH`.

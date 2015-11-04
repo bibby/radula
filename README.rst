@@ -30,7 +30,7 @@ Install radula from `pypi <https://pypi.python.org/pypi>`__ using
 
 ::
 
-    pip install -i radula
+    pip install radula
 
 The ``radula`` command should be available in your ``$PATH``.
 
