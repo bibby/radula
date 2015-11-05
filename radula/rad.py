@@ -14,7 +14,7 @@ from boto.s3.bucket import Bucket
 from boto.s3.key import Key
 from math import ceil
 from cStringIO import StringIO
-import json
+from boto.compat import json
 logger = logging.getLogger("radula")
 logger.setLevel(logging.INFO)
 
@@ -628,7 +628,10 @@ class RadulaLib(RadulaClient):
 
         if key_name:
             key = bucket.get_key(key_name)
-            return key.__dict__
+            if not key:
+                raise RadulaError("Key '{0}' not found".format(key_name))
+            key.bucket = bucket_name
+            return vars(key)
 
         size = 0
         objs = 0
@@ -643,27 +646,27 @@ class RadulaLib(RadulaClient):
             objs += 1
             size += key.size
             if lv is None or key.size > lv:
-                largest["obj"] = key
+                largest["obj"] = key.name
                 largest["val"] = key.size
 
             d = datetime.strptime(key.last_modified.split(".")[0], "%Y-%m-%dT%H:%M:%S")
             if nm is None or d > nm:
-                newest["obj"] = key
+                newest["obj"] = key.name
                 newest["val"] = d
             if om is None or d < om:
-                oldest["obj"] = key
+                oldest["obj"] = key.name
                 oldest["val"] = d
 
-        print json.dumps({
+        return {
             "size": size,
             "size_human": human_size(size),
             "keys": {
                 "count": objs,
-                "largest": str(largest.get("obj")),
-                "newest": str(newest.get("obj")),
-                "oldest": str(oldest.get("obj")),
+                "largest": largest.get("obj", None),
+                "newest": newest.get("obj", None),
+                "oldest": oldest.get("obj", None),
             }
-        })
+        }
 
 
     def remote_md5(self, subject):
@@ -674,6 +677,8 @@ class RadulaLib(RadulaClient):
             bucket_name, key_name = Radula.split_bucket(subject)
             bucket = self.conn.get_bucket(bucket_name)
             key = bucket.get_key(key_name)
+            if not key:
+                raise RadulaError("Remote file '{0}' not found".format(subject))
             return key.etag.translate(None, '"')
 
     def local_md5(self, subject):

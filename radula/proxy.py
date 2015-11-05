@@ -1,4 +1,5 @@
 from rad import RadulaLib, RadulaError
+from boto.compat import json
 
 
 class RadulaProxy(object):
@@ -105,7 +106,7 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing remote subject key to get info for")
 
-        print self.lib.info(subject)
+        print json.dumps(self.lib.info(subject)).replace('\\"', '')
 
     def local_md5(self, **kwargs):
         """performs a multithreaded hash of a local subject file"""

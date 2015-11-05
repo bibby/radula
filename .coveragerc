@@ -1,0 +1,3 @@
+[run]
+omit = 
+  radula/_version.py
