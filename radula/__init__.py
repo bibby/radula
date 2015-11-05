@@ -48,15 +48,15 @@ def _real_main():
         exit()
 
     command = args.command.replace('-', '_')
+    radu = Radula()
+    radu.config_check()
 
     if args.command in cmd_acl:
-        radu = Radula()
         radu.connect(profile=args.profile)
         getattr(radu, command)(**vars(args))
         exit()
 
     if args.command in cmd_usr:
-        radu = Radula()
         radu.connect(profile=args.profile)
         getattr(radu, command)(**vars(args))
         exit()
@@ -74,7 +74,7 @@ def check_negative(value):
     return int_value
 
 
-def _parse_args():
+def _parse_args(arg_string=None):
     args = argparse.ArgumentParser(description='RadosGW client')
     commands = cmd_acl + cmd_usr + cmd_proxy
 
@@ -154,7 +154,7 @@ def _parse_args():
         help='Target'
     )
 
-    options = args.parse_args(sys.argv[1:])
+    options = args.parse_args(arg_string or sys.argv[1:])
     if not options.command and not options.version:
         args.print_help()
         exit()

@@ -3,9 +3,9 @@ from rad import RadulaLib, RadulaError
 
 class RadulaProxy(object):
 
-    def __init__(self, profile=None):
+    def __init__(self, profile=None, connection=None):
         self.lib = RadulaLib()
-        self.lib.connect(profile)
+        self.lib.connect(profile, connection)
 
     def mb(self, **kwargs):
         """alias of make_bucket"""

@@ -34,6 +34,20 @@ Install radula from `pypi <https://pypi.python.org/pypi>`__ using
 
 The ``radula`` command should be available in your ``$PATH``.
 
+Testing
+-------
+
+Install the pip packages listed in ``testing-requirements.txt`` and run ``nosetests``.
+
+::
+
+    $ pip install -U -r testing-requirements.txt
+    $ nosetests --with-coverage --cover-package=radula
+
+The effort to increase code coverage is ongoing.
+
+
+
 Configure
 ---------
 

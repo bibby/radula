@@ -1,0 +1,4 @@
+nose
+boto
+moto
+coverage

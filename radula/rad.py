@@ -32,7 +32,7 @@ class RadulaClient(object):
         self.thread_count = RadulaClient.DEFAULT_UPLOAD_THREADS
         self._is_secure_placeholder = None
 
-    def connect(self, profile=None):
+    def connect(self, profile=None, connection=None):
         """create or reuse a boto s3 connection.
         An option aws profile may be given.
         """
@@ -41,6 +41,9 @@ class RadulaClient(object):
 
         if boto.config.getint('Boto', 'debug', 0) > 0:
             boto.set_stream_logger('boto')
+
+        if connection:
+            self.conn = connection;
 
         if not self.conn:
             self.conn = self.new_connection(profile)
@@ -371,6 +374,27 @@ class Radula(RadulaClient):
             return False
         return True
 
+    def config_check(self):
+        boto_configs = [
+            os.environ.get("BOTO_CONFIG", None),
+            os.path.expanduser("~/.boto"),
+            os.path.expanduser("~/.aws/credentials")
+        ]
+
+        for config in boto_configs:
+            if not config or not os.path.exists(config):
+                continue
+            mode = os.stat(config).st_mode
+            if mode & 077:
+                self.print_warning(config, oct(mode & 0777))
+
+    def print_warning(self, config, mode):
+        print '!' * 48
+        print '! WARNING'
+        msg = '! Boto config file "{0}" is mode {1}. Recommend changing to 0600 to avoid exposing credentials'
+        print msg.format(config, mode)
+        print '!' * 48
+
 
 class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
@@ -560,7 +584,7 @@ class RadulaLib(RadulaClient):
         bucket, key = Radula.split_bucket(subject)
         if not key:
             raise RadulaError("Missing key to download")
-        print "bucket", bucket, "key", key
+
         boto_key = self.conn.get_bucket(bucket).get_key(key)
         if not boto_key:
             raise RadulaError("Key not found: {0}".format(key))
