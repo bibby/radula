@@ -375,24 +375,40 @@ class Radula(RadulaClient):
         return True
 
     def config_check(self):
+
+        env_boto_config = os.environ.get("BOTO_CONFIG", None)
         boto_configs = [
-            os.environ.get("BOTO_CONFIG", None),
+            env_boto_config,
             os.path.expanduser("~/.boto"),
             os.path.expanduser("~/.aws/credentials")
         ]
+
+        if env_boto_config and not os.path.exists(env_boto_config):
+            message = "Environment variable BOTO_CONFIG is set to '{0}', " \
+                      "but file not found"
+            message = message.format(env_boto_config)
+            self.print_warning(message)
 
         for config in boto_configs:
             if not config or not os.path.exists(config):
                 continue
             mode = os.stat(config).st_mode
             if mode & 077:
-                self.print_warning(config, oct(mode & 0777))
+                message = 'Boto config file "{0}" is mode {1}. Recommend ' \
+                          'changing to 0600 to avoid exposing credentials'
+                message = message.format(config, oct(mode & 0777))
+                self.print_warning(message)
 
-    def print_warning(self, config, mode):
+            if not os.access(config, os.R_OK):
+                message = 'Config file {0} exists, but it is not readable.'
+                message = message.format(config)
+                self.print_warning(message)
+
+    @staticmethod
+    def print_warning(message):
         print '!' * 48
         print '! WARNING'
-        msg = '! Boto config file "{0}" is mode {1}. Recommend changing to 0600 to avoid exposing credentials'
-        print msg.format(config, mode)
+        print '! ' + message
         print '!' * 48
 
 
