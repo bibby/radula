@@ -14,7 +14,6 @@ from boto.s3.bucket import Bucket
 from boto.s3.key import Key
 from math import ceil
 from cStringIO import StringIO
-from boto.compat import json
 logger = logging.getLogger("radula")
 logger.setLevel(logging.INFO)
 
@@ -88,11 +87,16 @@ class Radula(RadulaClient):
     )
 
     @staticmethod
-    def split_bucket(subject):
-        """separate the bucket and key components from
-        a string, such as mybucket/path/to/key.
-        boto objects may also be given, and they already
-        know their constituent pieces.
+    def split_key(subject):
+        """separate a target string into bucket and key parts,
+        and require that key name not be empty"""
+        return Radula.split_bucket(subject, require_key=True)
+
+    @staticmethod
+    def split_bucket(subject, require_key=False):
+        """separate the bucket and key components from a string,
+        such as mybucket/path/to/key. boto objects may also be
+        given, and they already know their constituent pieces.
         """
         if isinstance(subject, Bucket):
             return subject, None
@@ -103,7 +107,11 @@ class Radula(RadulaClient):
         if len(s) == 1:
             s.append(None)
 
-        return tuple(s)
+        bucket_name, key_name = tuple(s)
+        if require_key and not key_name:
+            raise RadulaError("Invalid target, '{0}', contains no key name".format(subject))
+
+        return bucket_name, key_name
 
     def get_acl(self, **kwargs):
         """fetch a description of the ACL policy
@@ -432,37 +440,48 @@ class RadulaLib(RadulaClient):
         """proxy get_all_buckets in boto"""
         return self.conn.get_all_buckets()
 
-    def remove_key(self, subject):
+    def remove_key(self, subject, dry_run=False):
         """proxy delete_key in boto"""
-        bucket, key = Radula.split_bucket(subject)
-        self.conn.get_bucket(bucket).delete_key(key)
+        bucket_name, key_name = Radula.split_key(subject)
+        bucket = self.conn.get_bucket(bucket_name)
+        for key in self.keys(subject):
+            if dry_run:
+                yield 'DRY-RUN ' + key
+            else:
+                bucket.delete_key(key)
+                yield key
 
     def upload(self, subject, target, verify=False):
         """initiate multipart uploads of potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
         bucket = self.conn.get_bucket(bucket_name)
         files = glob(subject)
-        file_count = len(files)
-        if file_count == 0:
+        if len(files) == 0:
             raise RadulaError("No file(s) to upload: used {0}".format(subject))
 
         for source_path in files:
-            key_name = target_key
-            basename = os.path.basename(source_path)
-            if not key_name:
-                key_name = basename
-            elif key_name[-1] == "/":
-                key_name = "".join([key_name, basename])
-
+            key_name = self.guess_target_name(source_path, target_key)
             if not self._start_upload(source_path, bucket, key_name, verify):
                 raise RadulaError("{0} did not correctly upload".format(source_path))
 
-    def _file_size(self, src):
+    @staticmethod
+    def guess_target_name(source_path, target_key):
+        key_name = target_key
+        basename = os.path.basename(source_path)
+        if not key_name:
+            key_name = basename
+        elif key_name[-1] == "/":
+            key_name = "".join([key_name, basename])
+        return key_name
+
+    @staticmethod
+    def _file_size(src):
         """quick file sizing"""
         src.seek(0, 2)
         return src.tell()
 
-    def _chunk(self, source_size):
+    @staticmethod
+    def _chunk(source_size):
         """generate a chunk count and size for a large file.
         tiny_size is also calculated for last-part folding"""
         _mb = 1024 * 1024
@@ -480,7 +499,8 @@ class RadulaLib(RadulaClient):
 
         return chunk_count, chunk_size, tiny_size
 
-    def url_for(self, key):
+    @staticmethod
+    def url_for(key):
         """proxy generate_url in boto.Key"""
         return key.generate_url(expires_in=0, query_auth=False)
 
@@ -597,13 +617,10 @@ class RadulaLib(RadulaClient):
                 print "Aborting download."
                 exit(0)
 
-        bucket, key = Radula.split_bucket(subject)
-        if not key:
-            raise RadulaError("Missing key to download")
-
-        boto_key = self.conn.get_bucket(bucket).get_key(key)
+        bucket_name, key_name = Radula.split_key(subject)
+        boto_key = self.conn.get_bucket(bucket_name).get_key(key_name)
         if not boto_key:
-            raise RadulaError("Key not found: {0}".format(key))
+            raise RadulaError("Key not found: {0}".format(key_name))
 
         def progress_callback(a, b):
             percentage = 0
@@ -613,17 +630,10 @@ class RadulaLib(RadulaClient):
 
         boto_key.get_contents_to_filename(target, cb=progress_callback, num_cb=self.PROGRESS_CHUNKS)
 
-    def keys(self, subject):
-        """list keys in a bucket with consideration of glob patterns if provided"""
-        bucket_name, pattern = Radula.split_bucket(subject)
-
-        bucket = self.conn.get_bucket(bucket_name)
-        if not pattern:
-            return [key.name for key in bucket]
-
-        def key_buffer(buck, buffer_size=256):
+    @staticmethod
+    def _key_buffer(bucket, pattern, buffer_size=256):
             buffer_keys = []
-            for k in buck:
+            for k in bucket:
                 buffer_keys.append(k.name)
                 if len(buffer_keys) >= buffer_size:
                     filtered_keys = fnmatch.filter(buffer_keys, pattern)
@@ -632,8 +642,15 @@ class RadulaLib(RadulaClient):
                     buffer_keys = []
             yield fnmatch.filter(buffer_keys, pattern)
 
+    def keys(self, subject):
+        """list keys in a bucket with consideration of glob patterns if provided"""
+        bucket_name, pattern = Radula.split_bucket(subject)
+        bucket = self.conn.get_bucket(bucket_name)
+        if not pattern:
+            return [key.name for key in bucket]
+
         keys = []
-        for matching_keys in key_buffer(bucket):
+        for matching_keys in self._key_buffer(bucket, pattern):
             keys += matching_keys
         return keys
 
@@ -649,8 +666,8 @@ class RadulaLib(RadulaClient):
             key.bucket = bucket_name
             return vars(key)
 
-        size = 0
-        objs = 0
+        total_size = 0
+        object_count = 0
         largest = {"obj": None, "val": None}
         newest = {"obj": None, "val": None}
         oldest = {"obj": None, "val": None}
@@ -659,8 +676,8 @@ class RadulaLib(RadulaClient):
             nm = newest.get("val")
             om = oldest.get("val")
 
-            objs += 1
-            size += key.size
+            object_count += 1
+            total_size += key.size
             if lv is None or key.size > lv:
                 largest["obj"] = key.name
                 largest["val"] = key.size
@@ -674,23 +691,22 @@ class RadulaLib(RadulaClient):
                 oldest["val"] = d
 
         return {
-            "size": size,
-            "size_human": human_size(size),
+            "size": total_size,
+            "size_human": human_size(total_size),
             "keys": {
-                "count": objs,
+                "count": object_count,
                 "largest": largest.get("obj", None),
                 "newest": newest.get("obj", None),
                 "oldest": oldest.get("obj", None),
             }
         }
 
-
     def remote_md5(self, subject):
         """fetch hash from metadata of a remote subject key"""
         if type(subject) is boto.s3.key.Key:
             return subject.etag.translate(None, '"')
         else:
-            bucket_name, key_name = Radula.split_bucket(subject)
+            bucket_name, key_name = Radula.split_key(subject)
             bucket = self.conn.get_bucket(bucket_name)
             key = bucket.get_key(key_name)
             if not key:
@@ -698,7 +714,7 @@ class RadulaLib(RadulaClient):
             return key.etag.translate(None, '"')
 
     def local_md5(self, subject):
-        """performs a multithreaded hash of a local subject file"""
+        """performs a multi-threaded hash of a local subject file"""
         if not os.path.isfile(subject):
             raise RadulaError("Local file '{0}' not found".format(subject))
         hash_obj = md5()
@@ -732,11 +748,18 @@ class RadulaLib(RadulaClient):
         return '{0}-{1}'.format(hex_digest, num_parts)
 
     def verify(self, subject, target, copy=False):
+        """compares hashes of a local subject and a remote target
+        or those of two remote targets
+        """
+        bucket_name, key_name = Radula.split_bucket(target)
+        if isinstance(target, (str, unicode)):
+            target_key = self.guess_target_name(subject, key_name)
+            target = "/".join([bucket_name, target_key])
+
         if copy:
             local_md5 = self.remote_md5(subject)
             remote_md5 = self.remote_md5(target)
         else:
-            """compares hashes of a local subject and a remote target"""
             local_md5 = self.local_md5(subject)
             remote_md5 = self.remote_md5(target)
 
@@ -776,7 +799,7 @@ class RadulaLib(RadulaClient):
         return True
 
     def streaming_copy(self, source, destination, dest_profile=None, force=False, verify=False):
-        """intiate streaming copy between two keys"""
+        """initiate streaming copy between two keys"""
         source_bucket_name, source_key_name = Radula.split_bucket(source)
         source_bucket = self.conn.get_bucket(source_bucket_name)
         source_key = source_bucket.get_key(source_key_name)
@@ -792,6 +815,8 @@ class RadulaLib(RadulaClient):
             dest_conn = self.conn
 
         dest_bucket_name, dest_key_name = Radula.split_bucket(destination)
+        dest_key_name = self.guess_target_name(source, dest_key_name)
+
         dest_bucket = dest_conn.get_bucket(dest_bucket_name)
         dest_key = dest_bucket.get_key(dest_key_name)
         if dest_key is not None and not force:

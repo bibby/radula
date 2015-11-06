@@ -92,7 +92,7 @@ to right.
 
     $ radula -h
     usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-                  [-d DESTINATION] [-f] [-y]
+                  [-d DESTINATION] [-f] [-y] [-n]
                   [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,u
     p,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy
     }]
@@ -120,6 +120,7 @@ to right.
                             Destination boto profile, required for streaming copy
       -f, --force           Overwrite local files without confirmation
       -y, --verify          Verify uploads after they complete
+      -n, --dry-run         Print would-be deletions without deleting
 
 Examples
 --------

@@ -89,7 +89,8 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing file(s) to remove")
 
-        self.lib.remove_key(subject)
+        for key in self.lib.remove_key(subject, dry_run=kwargs.get("dry_run", False)):
+            print key
 
     def keys(self, **kwargs):
         """lists keys of a subject bucket"""

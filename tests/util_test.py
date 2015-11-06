@@ -2,7 +2,7 @@ from argparse import ArgumentTypeError
 from nose.tools import raises
 from nose.tools import assert_equal
 from radula import *
-from radula.rad import human_size
+from radula.rad import human_size, RadulaLib
 
 
 def test_check_negative():
@@ -46,3 +46,21 @@ def comp_human_size(i, o, p):
         assert_equal(o, human_size(i))
     else:
         assert_equal(o, human_size(i, precision=p))
+
+
+def guess_target_name_test():
+    test_sets = (
+        # source, target, expected
+        ("src", "", "src"),
+        ("src", "path/", "path/src"),
+        ("src", "path/src2", "path/src2"),
+        ("src", "path", "path"),
+        ("path/to/src", "", "src"),
+        ("path/to/src", "path/", "path/src"),
+    )
+    for subject, target, expected in test_sets:
+        yield guess_method, subject, target, expected
+
+
+def guess_method(subject, target, expected):
+    assert_equal(expected, RadulaLib().guess_target_name(subject, target))

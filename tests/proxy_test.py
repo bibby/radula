@@ -297,11 +297,14 @@ def rm_method(method):
         remove_file = expected.pop()
         sys.stdout.truncate(0)
         getattr(radu, method)(subject=remove_file)
+        absent_key = os.path.basename(remove_file)
+        keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
+        assert_in(absent_key, keys, msg="Expecting output containing '{0}'".format(absent_key))
+        sys.stdout.truncate(0)
 
         radu.keys(subject=TEST_BUCKET)
         keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
 
-        absent_key = os.path.basename(remove_file)
         assert_not_in(absent_key, keys, msg="Expecting absence of key mention '{0}'".format(absent_key))
         for expected_key in expected:
             expected_key = os.path.basename(expected_key)

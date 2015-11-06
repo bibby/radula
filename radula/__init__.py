@@ -134,6 +134,13 @@ def _parse_args(arg_string=None):
     )
 
     args.add_argument(
+        '-n', '--dry-run',
+        dest='dry_run',
+        action='store_true',
+        help='Print would-be deletions without deleting'
+    )
+
+    args.add_argument(
         'command',
         nargs='?',
         help='command',
