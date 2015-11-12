@@ -63,7 +63,6 @@ def check_command(input, output):
         assert_equal(args.get(prop), output.get(prop))
 
 
-
 @mock_s3
 def test_make_bucket():
     radu = RadulaProxy(connection=boto.connect_s3())
@@ -148,9 +147,9 @@ def up_method(method, test_set):
     radu.make_bucket(subject=TEST_BUCKET)
     sys.stdout.truncate(0)
 
-    args = vars(_parse_args([method]))
+    args = vars(_parse_args(["-y", method]))
     args.update(test_set)
-    getattr(radu, method)(**args)
+    getattr(radu, args.get("command"))(**args)
 
     assert_false(handler.matches(levelno=logging.ERROR))
     assert_false(handler.matches(levelno=logging.WARNING))
@@ -224,7 +223,7 @@ def dl_method(method, test_set):
 
     args = vars(_parse_args([method, '-f']))
     args.update(test_set)
-    getattr(radu, method)(**args)
+    getattr(radu, args.get("command"))(**args)
 
     out = sys.stdout.getvalue().strip()
     msgs = [
@@ -317,6 +316,7 @@ def key_info_no_subject_test():
     radu = RadulaProxy(connection=boto.connect_s3())
     radu.make_bucket(subject=TEST_BUCKET)
     radu.info()
+
 
 @mock_s3
 @raises(RadulaError)
@@ -532,3 +532,54 @@ def verify_test():
 
     for msg in msgs:
         assert_true(handler.matches(message=msg), msg="Expecting log message containing '{0}'".format(msg))
+
+
+def copy_test():
+    methods = ['sc', 'streaming-copy']
+    for method in methods:
+        yield copy_method, method
+
+
+@mock_s3
+def copy_method(method):
+    handler = TestHandler(Matcher())
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+    radu = RadulaProxy(connection=boto.connect_s3())
+    radu.make_bucket(subject=TEST_BUCKET)
+
+    # give something to download
+    args = vars(_parse_args(['up']))
+    args.update({
+        "subject": TEST_FILE,
+        "target": REMOTE_FILE
+    })
+    radu.upload(**args)
+    sys.stdout.truncate(0)
+
+    # 'threads' needed
+    args = vars(_parse_args(['-y', method]))
+    target_file = REMOTE_FILE + '-copy'
+    args.update({
+        "subject": REMOTE_FILE,
+        "target": target_file
+    })
+    radu.streaming_copy(**args)
+
+    msgs = [
+        "Finished uploading",
+        "tests.s3.amazonaws.com/data.txt",
+        "Download URL",
+        "Checksum Verified!"
+    ]
+
+    for msg in msgs:
+        assert_true(handler.matches(message=msg), msg="Expecting log message containing '{0}'".format(msg))
+
+    radu.keys(subject=TEST_BUCKET)
+    keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
+    expected = [REMOTE_FILE, target_file]
+
+    for expected_key in expected:
+        expected_key = os.path.basename(expected_key)
+        assert_in(expected_key, keys, msg="Expecting output containing '{0}'".format(expected_key))

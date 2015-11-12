@@ -185,4 +185,4 @@ class RadulaProxy(object):
         if not dest:
             raise RadulaError("missing destination bucket/key")
 
-        print self.lib.streaming_copy(source, dest, dest_profile, force, verify)
+        self.lib.streaming_copy(source, dest, dest_profile, force, verify)

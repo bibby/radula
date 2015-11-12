@@ -1,4 +1,4 @@
 nose
 boto
-moto
+git+https://github.com/spulec/moto.git@e8828f97879f271c72219f07976a24fe9d767c15
 coverage

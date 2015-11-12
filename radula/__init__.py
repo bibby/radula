@@ -1,7 +1,7 @@
 import sys
 import argparse
 import logging
-from rad import Radula, RadulaError, RadulaClient
+from rad import Radula, RadulaError, RadulaClient, config_check
 from proxy import RadulaProxy
 
 from ._version import get_versions
@@ -48,8 +48,8 @@ def _real_main():
         exit()
 
     command = args.command.replace('-', '_')
+    config_check()
     radu = Radula()
-    radu.config_check()
 
     if args.command in cmd_acl:
         radu.connect(profile=args.profile)

@@ -9,6 +9,7 @@ from hashlib import md5
 from glob import glob
 from multiprocessing import Pool
 import boto
+from boto.exception import S3ResponseError
 import boto.s3.connection
 from boto.s3.bucket import Bucket
 from boto.s3.key import Key
@@ -25,8 +26,8 @@ class RadulaError(Exception):
 class RadulaClient(object):
     DEFAULT_UPLOAD_THREADS = 10
 
-    def __init__(self):
-        self.conn = None
+    def __init__(self, connection=None):
+        self.conn = connection
         self.profile = None
         self.thread_count = RadulaClient.DEFAULT_UPLOAD_THREADS
         self._is_secure_placeholder = None
@@ -42,7 +43,7 @@ class RadulaClient(object):
             boto.set_stream_logger('boto')
 
         if connection:
-            self.conn = connection;
+            self.conn = connection
 
         if not self.conn:
             self.conn = self.new_connection(profile)
@@ -53,7 +54,8 @@ class RadulaClient(object):
         args = {}
 
         if profile:
-            """ when directed to use a profile, check if it stipulate host, port, and/or is_secure and manually add those to the args """
+            """ when directed to use a profile, check if it stipulate host, port, and/or is_
+            secure and manually add those to the args """
             args['profile_name'] = profile
             profile_name = 'profile {name}'.format(name=profile)
             if boto.config.has_section(profile_name):
@@ -84,6 +86,8 @@ class Radula(RadulaClient):
         'public-read',
         'public-read-write',
         'authenticated-read',
+        'bucket-owner-read',
+        'bucket-owner-full-control',
     )
 
     @staticmethod
@@ -120,19 +124,28 @@ class Radula(RadulaClient):
         if not subject:
             raise RadulaError("Subject (bucket/key) is needed")
 
-        bucket, key = self.split_bucket(subject)
-        bucket = self.conn.get_bucket(bucket)
+        try:
+            bucket_name, key_name = self.split_bucket(subject)
+            bucket = self.conn.get_bucket(bucket_name)
 
-        if key:
-            subject_type = Radula.KEY
-            subject = bucket.get_key(key)
-        else:
-            subject = bucket
-            subject_type = Radula.BUCKET
+            if key_name:
+                subject_type = Radula.KEY
+                subject_name = key_name
+                subject = bucket.get_key(key_name)
+            else:
+                subject = bucket
+                subject_name = bucket_name
+                subject_type = Radula.BUCKET
 
-        policy = subject.get_acl()
-        grants = self.format_policy(policy)
-        print "ACL for {0}: {1}".format(subject_type, subject)
+            if not subject:
+                msg = "Subject {0} '{1}' not found."
+                raise RadulaError(msg.format(subject_type, subject_name))
+            policy = subject.get_acl()
+            grants = self.format_policy(policy)
+        except S3ResponseError as e:
+            raise RadulaError(e.message)
+
+        print "ACL for {0}: {1}".format(subject_type, subject.name)
         print grants
 
     def set_acl(self, **kwargs):
@@ -147,22 +160,32 @@ class Radula(RadulaClient):
             msg = msg.format(", ".join(Radula.CANNED_ACLS))
             raise RadulaError(msg)
 
-        bucket, key = self.split_bucket(subject)
-        bucket = self.conn.get_bucket(bucket)
-        sync_acl = False
+        try:
+            bucket_name, key_name = self.split_bucket(subject)
+            bucket = self.conn.get_bucket(bucket_name)
+            sync_acl = False
 
-        if key:
-            subject_type = Radula.KEY
-            subject = bucket.get_key(key)
-        else:
-            subject = bucket
-            subject_type = Radula.BUCKET
-            sync_acl = True
+            if key_name:
+                subject_type = Radula.KEY
+                subject_name = key_name
+                subject = bucket.get_key(key_name)
+            else:
+                subject = bucket
+                subject_name = bucket_name
+                subject_type = Radula.BUCKET
+                sync_acl = True
 
-        subject.set_acl(target)
-        policy = subject.get_acl()
-        grants = self.format_policy(policy)
-        print "ACL for {0}: {1}".format(subject_type, subject)
+            if not subject:
+                msg = "Subject {0} '{1}' not found."
+                raise RadulaError(msg.format(subject_type, subject_name))
+
+            subject.set_acl(target)
+            policy = subject.get_acl()
+            grants = self.format_policy(policy)
+        except S3ResponseError as e:
+            raise RadulaError(e.message)
+
+        print "ACL for {0}: {1}".format(subject_type, subject.name)
         print grants
 
         if sync_acl:
@@ -233,9 +256,10 @@ class Radula(RadulaClient):
             raise RadulaError("Subject (bucket/key) is needed")
 
         bucket, key = self.split_bucket(subject)
-        bucket = self.conn.get_bucket(bucket)
-        policy = bucket.get_acl()
-        bucket_acl = self.format_policy(policy)
+        if not isinstance(bucket, (Bucket,)):
+            bucket = self.conn.get_bucket(bucket)
+        bucket_policy = bucket.get_acl()
+        bucket_acl = self.format_policy(bucket_policy)
 
         print "Bucket ACL for: {0}".format(bucket.name)
         print bucket_acl
@@ -247,8 +271,18 @@ class Radula(RadulaClient):
             keys = bucket.list()
 
         for key in keys:
+            key_policy = key.get_acl()
+            if key_policy and bucket_policy and key_policy.owner.id != bucket_policy.owner.id:
+                key = self.chown(key)
+
             print "Setting bucket's ACL on {0}".format(key.name)
-            key.set_acl(policy)
+            key.set_acl(bucket_policy)
+
+    def chown(self, key):
+        logger.warn("Changing ownership of key {0}".format(key.name))
+        lib = RadulaLib(connection=self.conn)
+        key_string = os.path.join(key.bucket.name, key.name)
+        return lib.streaming_copy(key_string, key_string, force=True, verify=True)
 
     def allow(self, **kwargs):
         """alias of allow_user"""
@@ -279,14 +313,19 @@ class Radula(RadulaClient):
         target_type = Radula.BUCKET
 
         if key:
-            target = target.get_key(key)
+            if isinstance(key, Key):
+                target = key
+            else:
+                target = target.get_key(key)
             target_type = Radula.KEY
 
         permissions = []
         if read:
             permissions.append("READ")
+            permissions.append("READ_ACP")
         if write:
             permissions.append("WRITE")
+            permissions.append("WRITE_ACP")
 
         policy = target.get_acl()
         acl = policy.acl
@@ -382,43 +421,6 @@ class Radula(RadulaClient):
             return False
         return True
 
-    def config_check(self):
-
-        env_boto_config = os.environ.get("BOTO_CONFIG", None)
-        boto_configs = [
-            env_boto_config,
-            os.path.expanduser("~/.boto"),
-            os.path.expanduser("~/.aws/credentials")
-        ]
-
-        if env_boto_config and not os.path.exists(env_boto_config):
-            message = "Environment variable BOTO_CONFIG is set to '{0}', " \
-                      "but file not found"
-            message = message.format(env_boto_config)
-            self.print_warning(message)
-
-        for config in boto_configs:
-            if not config or not os.path.exists(config):
-                continue
-            mode = os.stat(config).st_mode
-            if mode & 077:
-                message = 'Boto config file "{0}" is mode {1}. Recommend ' \
-                          'changing to 0600 to avoid exposing credentials'
-                message = message.format(config, oct(mode & 0777))
-                self.print_warning(message)
-
-            if not os.access(config, os.R_OK):
-                message = 'Config file {0} exists, but it is not readable.'
-                message = message.format(config)
-                self.print_warning(message)
-
-    @staticmethod
-    def print_warning(message):
-        print '!' * 48
-        print '! WARNING'
-        print '! ' + message
-        print '!' * 48
-
 
 class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
@@ -460,51 +462,64 @@ class RadulaLib(RadulaClient):
             raise RadulaError("No file(s) to upload: used {0}".format(subject))
 
         for source_path in files:
-            key_name = self.guess_target_name(source_path, target_key)
+            key_name = guess_target_name(source_path, target_key)
             if not self._start_upload(source_path, bucket, key_name, verify):
                 raise RadulaError("{0} did not correctly upload".format(source_path))
 
-    @staticmethod
-    def guess_target_name(source_path, target_key):
-        key_name = target_key
-        basename = os.path.basename(source_path)
-        if not key_name:
-            key_name = basename
-        elif key_name[-1] == "/":
-            key_name = "".join([key_name, basename])
-        return key_name
-
-    @staticmethod
-    def _file_size(src):
-        """quick file sizing"""
-        src.seek(0, 2)
-        return src.tell()
-
-    @staticmethod
-    def _chunk(source_size):
-        """generate a chunk count and size for a large file.
-        tiny_size is also calculated for last-part folding"""
-        _mb = 1024 * 1024
-        _gb = _mb * 1024
-        tiny_size = 25 * _mb
-        default_chunk = 100 * _mb
-
-        if source_size < tiny_size:
-            return 1, source_size, tiny_size
-
-        split_count = 50
-        chunk_size = max(default_chunk, int(ceil(source_size / float(split_count))))
-        chunk_size = min(_gb, chunk_size)
-        chunk_count = int(ceil(source_size / float(chunk_size)))
-
-        return chunk_count, chunk_size, tiny_size
-
-    @staticmethod
-    def url_for(key):
-        """proxy generate_url in boto.Key"""
-        return key.generate_url(expires_in=0, query_auth=False)
-
     def _start_upload(self, source, bucket, key_name, verify=False, copy_from_key=False, dest_conn=None):
+        if copy_from_key:
+            source_name = source
+            source_size = source.size
+        else:
+            source_name = source
+            source = open(source, 'rb')
+            source_size = file_size(source)
+
+        num_parts, chunk_size, tiny_size = calculate_chunks(source_size)
+        if num_parts == 1:
+            key = self._single_part_upload(
+                source,
+                key_name,
+                bucket,
+                copy_from_key=copy_from_key,
+                source_size=source_size)
+        else:
+            key = self._multi_part_upload(
+                source,
+                key_name,
+                bucket=bucket,
+                copy_from_key=copy_from_key,
+                source_size=source_size,
+                num_parts=num_parts,
+                chunk_size=chunk_size,
+                tiny_size=tiny_size,
+                dest_conn=dest_conn)
+
+        if not verify:
+            return True
+
+        return self.verify(source_name, key, copy_from_key)
+
+    def _single_part_upload(self, source, key_name, bucket, copy_from_key=False, source_size=0):
+        t1 = time.time()
+        if copy_from_key:
+            data = source.get_contents_as_string()
+            key = bucket.new_key(key_name)
+            key.set_contents_from_string(data)
+        else:
+            source.seek(0)
+            key = bucket.new_key(key_name)
+            key.set_contents_from_file(source)
+        t2 = time.time() - t1
+
+        key = bucket.get_key(key_name)
+        self.sync_acl(key, bucket)
+        print_timings(key, source_size, t2)
+        return key
+
+    def _multi_part_upload(self, source, key_name, bucket,
+                           copy_from_key=False, source_size=0, num_parts=0,
+                           chunk_size=0, tiny_size=0, dest_conn=None):
         """multipart upload strategy.
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
@@ -512,32 +527,6 @@ class RadulaLib(RadulaClient):
         max_tries = 5
         if dest_conn is None:
             dest_conn = self.conn
-
-        if copy_from_key:
-            source_key = source
-            source_size = source_key.size
-        else:
-            source_path = source
-            src = open(source_path, 'rb')
-            source_size = self._file_size(src)
-
-        num_parts, chunk_size, tiny_size = self._chunk(source_size)
-
-        if num_parts == 1:
-            t1 = time.time()
-            if copy_from_key:
-                data = source_key.get_contents_as_string()
-                k = bucket.new_key(key_name)
-                k.set_contents_from_string(data)
-            else:
-                src.seek(0)
-                k = bucket.new_key(key_name)
-                k.set_contents_from_file(src)
-            t2 = time.time() - t1
-            logger.info("Finished uploading %s in %0.2fs (%sps)" % (human_size(source_size), t2, human_size(source_size/t2)))
-            logger.info("Download URL: {url}".format(url=self.url_for(k)))
-            return self.verify(source, k, copy_from_key)
-
         mpu = bucket.initiate_multipart_upload(key_name)
         logger.info("Initialized upload: %s (%s)" % (mpu.id, human_size(source_size)))
 
@@ -546,9 +535,9 @@ class RadulaLib(RadulaClient):
             for i in range(num):
                 chunk_start = chunk_size * i
                 if copy:
-                    name = (source_key.bucket.name, source_key.name)
+                    name = (source.bucket.name, source.name)
                 else:
-                    name = src.name
+                    name = source.name
                 args = [self.conn, bucket.name, mpu.id, name, i, chunk_start, chunk_size, max_tries, 0, num, copy, dest_conn]
                 if i == (num-1) and fold_last_chunk is True:
                     args[6] = chunk_size * 2
@@ -565,9 +554,6 @@ class RadulaLib(RadulaClient):
             pool.map_async(do_part_upload, gen_args(num_parts, fold_last, copy_from_key)).get(9999999)
             # Print out some timings
             t2 = time.time() - t1
-            # Finalize
-            if not copy_from_key:
-                src.close()
             mpu.complete_upload()
 
         except KeyboardInterrupt:
@@ -592,15 +578,29 @@ class RadulaLib(RadulaClient):
             raise
 
         key = bucket.get_key(key_name)
-        key.set_acl(bucket.get_acl())
-        logger.info("Finished uploading %s in %0.2fs (%sps)" % (human_size(source_size), t2, human_size(source_size/t2)))
-        logger.info("Download URL: {url}".format(url=self.url_for(key)))
+        self.sync_acl(key, bucket)
+        print_timings(key, source_size, t2)
+        return key
 
-        if not verify:
-            return True
+    @staticmethod
+    def sync_acl(key, bucket):
+        bucket_policy = bucket.get_acl()
+        bucket_owner = bucket_policy.owner.id
+        key_policy = key.get_acl()
+        key_owner = key_policy.owner.id
 
-        # Verify upload
-        return self.verify(source, key, copy_from_key)
+        if key_owner == bucket_owner:
+            if bucket_policy.acl:
+                key.set_acl(bucket_policy)
+        else:
+            grants = bucket_policy.acl.grants
+            key_policy.acl.grants = grants
+            key.set_acl(key_policy)
+
+            for permission in ['FULL_CONTROL']:
+                if not Radula.is_granted(key_policy.acl.grants, bucket_owner, permission):
+                    key_policy.acl.add_user_grant(permission, bucket_owner)
+                    key.set_acl(key_policy)
 
     def download(self, subject, target, force=False):
         """proxy download in boto, warning user about overwrites"""
@@ -630,8 +630,16 @@ class RadulaLib(RadulaClient):
 
         boto_key.get_contents_to_filename(target, cb=progress_callback, num_cb=self.PROGRESS_CHUNKS)
 
-    @staticmethod
-    def _key_buffer(bucket, pattern, buffer_size=256):
+    def keys(self, subject):
+        """list keys in a bucket with consideration of glob patterns if provided"""
+        bucket_name, pattern = Radula.split_bucket(subject)
+        bucket = self.conn.get_bucket(bucket_name)
+        if not pattern:
+            for key in bucket:
+                yield key.name
+            return
+
+        def _key_buffer(buffer_size=256):
             buffer_keys = []
             for k in bucket:
                 buffer_keys.append(k.name)
@@ -642,17 +650,9 @@ class RadulaLib(RadulaClient):
                     buffer_keys = []
             yield fnmatch.filter(buffer_keys, pattern)
 
-    def keys(self, subject):
-        """list keys in a bucket with consideration of glob patterns if provided"""
-        bucket_name, pattern = Radula.split_bucket(subject)
-        bucket = self.conn.get_bucket(bucket_name)
-        if not pattern:
-            return [key.name for key in bucket]
-
-        keys = []
-        for matching_keys in self._key_buffer(bucket, pattern):
-            keys += matching_keys
-        return keys
+        for matching_keys in _key_buffer():
+            for key in matching_keys:
+                yield key
 
     def info(self, subject):
         """fetch metadata of a remote subject key"""
@@ -707,11 +707,17 @@ class RadulaLib(RadulaClient):
             return subject.etag.translate(None, '"')
         else:
             bucket_name, key_name = Radula.split_key(subject)
-            bucket = self.conn.get_bucket(bucket_name)
-            key = bucket.get_key(key_name)
-            if not key:
-                raise RadulaError("Remote file '{0}' not found".format(subject))
-            return key.etag.translate(None, '"')
+            try:
+                bucket = self.conn.get_bucket(bucket_name)
+                key = bucket.get_key(key_name)
+                if not key:
+                    raise RadulaError("Remote file '{0}' not found".format(subject))
+                return key.etag.translate(None, '"')
+            except Exception as e:
+                logger.info("bucket: " + bucket_name)
+                logger.info("key_name: " + key_name)
+                logger.error(e.message)
+                raise
 
     def local_md5(self, subject):
         """performs a multi-threaded hash of a local subject file"""
@@ -720,8 +726,8 @@ class RadulaLib(RadulaClient):
         hash_obj = md5()
 
         with open(subject, 'rb') as source_file:
-            source_size = self._file_size(source_file)
-            num_parts, chunk_size, tiny_size = self._chunk(source_size)
+            source_size = file_size(source_file)
+            num_parts, chunk_size, tiny_size = calculate_chunks(source_size)
             key = Key()
 
             if num_parts == 1:
@@ -753,7 +759,7 @@ class RadulaLib(RadulaClient):
         """
         bucket_name, key_name = Radula.split_bucket(target)
         if isinstance(target, (str, unicode)):
-            target_key = self.guess_target_name(subject, key_name)
+            target_key = guess_target_name(subject, key_name)
             target = "/".join([bucket_name, target_key])
 
         if copy:
@@ -815,7 +821,7 @@ class RadulaLib(RadulaClient):
             dest_conn = self.conn
 
         dest_bucket_name, dest_key_name = Radula.split_bucket(destination)
-        dest_key_name = self.guess_target_name(source, dest_key_name)
+        dest_key_name = guess_target_name(source, dest_key_name)
 
         dest_bucket = dest_conn.get_bucket(dest_bucket_name)
         dest_key = dest_bucket.get_key(dest_key_name)
@@ -823,8 +829,9 @@ class RadulaLib(RadulaClient):
             raise RadulaError("dest key exists (use -f to overwrite)")
 
         if not self._start_upload(source_key, dest_bucket, dest_key_name, verify, True, dest_conn):
-
             raise RadulaError("{0} did not correctly upload".format(source))
+
+        return dest_key
 
 
 def human_size(size, precision=2):
@@ -912,3 +919,86 @@ def do_part_upload(args):
             do_part_upload((s3, bucket_name, mpu_id, source_name, i, start, size, max_tries, current_tries, num_parts, copy, dest_conn))
     s = len(data)
     logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (i+1, num_parts, human_size(s), t2, human_size(s/t2)))
+
+
+def config_check():
+    env_boto_config = os.environ.get("BOTO_CONFIG", None)
+    boto_configs = [
+        env_boto_config,
+        os.path.expanduser("~/.boto"),
+        os.path.expanduser("~/.aws/credentials")
+    ]
+
+    if env_boto_config and not os.path.exists(env_boto_config):
+        message = "Environment variable BOTO_CONFIG is set to '{0}', " \
+                  "but file not found"
+        message = message.format(env_boto_config)
+        print_warning(message)
+
+    for config in boto_configs:
+        if not config or not os.path.exists(config):
+            continue
+        mode = os.stat(config).st_mode
+        if mode & 077:
+            message = 'Boto config file "{0}" is mode {1}. Recommend ' \
+                      'changing to 0600 to avoid exposing credentials'
+            message = message.format(config, oct(mode & 0777))
+            print_warning(message)
+
+        if not os.access(config, os.R_OK):
+            message = 'Config file {0} exists, but it is not readable.'
+            message = message.format(config)
+            print_warning(message)
+
+
+def file_size(src):
+    """quick file sizing"""
+    src.seek(0, 2)
+    return src.tell()
+
+
+def print_timings(key, source_size, timing):
+        timings = (human_size(source_size), timing, human_size(source_size / timing))
+        logger.info("Finished uploading %s in %0.2fs (%sps)" % timings)
+        logger.info("Download URL: {url}".format(url=url_for(key)))
+
+
+def calculate_chunks(source_size):
+    """generate a chunk count and size for a large file.
+    tiny_size is also calculated for last-part folding"""
+    _mb = 1024 * 1024
+    _gb = _mb * 1024
+    tiny_size = 25 * _mb
+    default_chunk = 100 * _mb
+
+    if source_size < tiny_size:
+        return 1, source_size, tiny_size
+
+    split_count = 50
+    chunk_size = max(default_chunk, int(ceil(source_size / float(split_count))))
+    chunk_size = min(_gb, chunk_size)
+    chunk_count = int(ceil(source_size / float(chunk_size)))
+
+    return chunk_count, chunk_size, tiny_size
+
+
+def url_for(key):
+    """proxy generate_url in boto.Key"""
+    return key.generate_url(expires_in=0, query_auth=False)
+
+
+def guess_target_name(source_path, target_key):
+    key_name = target_key
+    basename = os.path.basename(source_path)
+    if not key_name:
+        key_name = basename
+    elif key_name[-1] == "/":
+        key_name = "".join([key_name, basename])
+    return key_name
+
+
+def print_warning(message):
+    print '!' * 48
+    print '! WARNING'
+    print '! ' + message
+    print '!' * 48
