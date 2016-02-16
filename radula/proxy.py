@@ -186,3 +186,9 @@ class RadulaProxy(object):
             raise RadulaError("missing destination bucket/key")
 
         self.lib.streaming_copy(source, dest, dest_profile, force, verify)
+
+    def cat(self, **kwargs):
+        source = kwargs.get("subject", None)
+        if not source:
+            raise RadulaError("missing source bucket/key")
+        self.lib.cat(source)

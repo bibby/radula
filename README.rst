@@ -93,8 +93,9 @@ to right.
     $ radula -h
     usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
                   [-d DESTINATION] [-f] [-y] [-n]
-                  [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,u
-    p,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy
+                  [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,
+    up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy,
+    cat
     }]
                   [subject] [target]
 
@@ -102,7 +103,7 @@ to right.
 
     positional arguments:                                                                                                                      [2/643]
       {get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,
-    dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy}
+    dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy,cat}
                             command
       subject               Subject
       target                Target
@@ -460,6 +461,20 @@ download; in the table above ``dir`` is an existing directory.
 
 If a file with the target name already exists, ``radula`` will ask if
 you wish to overwrite it unless the ``-f``, ``--force`` flag is enabled.
+
+cat
+~~~
+
+An alternative to `download` is `cat`, which prints the contents of a remote subject
+to `stdout`.
+
+::
+
+    $ echo "Hello there you" > hello
+    $ radula up hello mybucket/hello
+    INFO:radula:Finished uploading 16.00 B in 0.08s (188.82 Bps)
+    $ radula cat mybucket/hello
+    Hello there you
 
 verify uploads
 ~~~~~~~~~~~~~~

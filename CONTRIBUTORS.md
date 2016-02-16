@@ -10,3 +10,7 @@ radula contributors
 
   * managing bibby
   * Streaming Copy
+
+* **[hashhsah](https://github.com/hashhsah)**
+
+  * bugfix #4

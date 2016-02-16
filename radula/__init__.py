@@ -37,7 +37,7 @@ cmd_proxy = [
     'rm', 'remove',
     'keys', 'info',
     'local-md5', 'remote-md5', 'verify',
-    'sc', 'streaming-copy'
+    'sc', 'streaming-copy', 'cat'
 ]
 
 
@@ -123,14 +123,14 @@ def _parse_args(arg_string=None):
         '-f', '--force',
         dest='force',
         action='store_true',
-        help='Overwrite local files without confirmation'.format(default_threads)
+        help='Overwrite local files without confirmation'
     )
 
     args.add_argument(
         '-y', '--verify',
         dest='verify',
         action='store_true',
-        help='Verify uploads after they complete'.format(default_threads)
+        help='Verify uploads after they complete. Uses --threads'
     )
 
     args.add_argument(

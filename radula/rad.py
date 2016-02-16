@@ -15,6 +15,8 @@ from boto.s3.bucket import Bucket
 from boto.s3.key import Key
 from math import ceil
 from cStringIO import StringIO
+import re
+
 logger = logging.getLogger("radula")
 logger.setLevel(logging.INFO)
 
@@ -66,9 +68,14 @@ class RadulaClient(object):
                 if host:
                     args['host'] = host
                 if boto.config.has_option(profile_name, 'is_secure'):
-                    args['is_secure'] = boto.config.get(profile_name, 'is_secure', None)
-                    self._is_secure_placeholder = boto.config.get('Boto', 'is_secure', None)
+                    args['is_secure'] = boto.config.getbool(profile_name, 'is_secure', 'True')
+                    self._is_secure_placeholder = boto.config.getbool('Boto', 'is_secure', None)
                     boto.config.remove_option('Boto', 'is_secure')
+        else:
+            """ not using a profile, check if port is set, because boto doesnt check"""
+            port = boto.config.get('s3', 'port', None)
+            if port:
+                args['port'] = int(port)
 
         conn = boto.connect_s3(calling_format=boto.s3.connection.OrdinaryCallingFormat(), **args)
 
@@ -524,7 +531,6 @@ class RadulaLib(RadulaClient):
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
         """
-        max_tries = 5
         if dest_conn is None:
             dest_conn = self.conn
         mpu = bucket.initiate_multipart_upload(key_name)
@@ -538,7 +544,7 @@ class RadulaLib(RadulaClient):
                     name = (source.bucket.name, source.name)
                 else:
                     name = source.name
-                args = [self.conn, bucket.name, mpu.id, name, i, chunk_start, chunk_size, max_tries, 0, num, copy, dest_conn]
+                args = [self.conn, bucket.name, mpu.id, name, i, chunk_start, chunk_size, num, copy, dest_conn]
                 if i == (num-1) and fold_last_chunk is True:
                     args[6] = chunk_size * 2
                 yield tuple(args)
@@ -557,24 +563,24 @@ class RadulaLib(RadulaClient):
             mpu.complete_upload()
 
         except KeyboardInterrupt:
-            logger.warn("Received KeyboardInterrupt, canceling upload")
+            logger.warn("Received KeyboardInterrupt, cancelling upload")
             try:
                 if pool:
                     pool.terminate()
                 mpu.cancel_upload()
-            except:
-                logger.error("Error while cancelling upload")
+            except Exception:
+                logger.error("Error while cancelling upload", exc_info=True)
+                raise
             raise
-        except:
-            exc_class, exc, tb = sys.exc_info()
-            logger.error("Encountered an error, canceling upload")
-            logger.error(exc)
+        except Exception as e:
+            logger.error("Encountered an error, cancelling upload", exc_info=True)
             try:
                 if pool:
                     pool.terminate()
                 mpu.cancel_upload()
-            except:
-                logger.error("Error while cancelling upload")
+            except Exception:
+                logger.error("Error while cancelling upload", exc_info=True)
+                raise e
             raise
 
         key = bucket.get_key(key_name)
@@ -629,6 +635,15 @@ class RadulaLib(RadulaClient):
             print "Download Progress: %.2f%%" % percentage
 
         boto_key.get_contents_to_filename(target, cb=progress_callback, num_cb=self.PROGRESS_CHUNKS)
+
+    def cat(self, subject):
+        """print remote file to stdout"""
+        bucket_name, key_name = Radula.split_key(subject)
+        boto_key = self.conn.get_bucket(bucket_name).get_key(key_name)
+        if not boto_key:
+            raise RadulaError("Key not found: {0}".format(key_name))
+
+        sys.stdout.write(boto_key.get_contents_as_string())
 
     def keys(self, subject):
         """list keys in a bucket with consideration of glob patterns if provided"""
@@ -716,7 +731,7 @@ class RadulaLib(RadulaClient):
             except Exception as e:
                 logger.info("bucket: " + bucket_name)
                 logger.info("key_name: " + key_name)
-                logger.error(e.message)
+                logger.error(e.message, exc_info=True)
                 raise
 
     def local_md5(self, subject):
@@ -871,7 +886,7 @@ def do_part_upload(args):
                  The arguments are: S3, Bucket name, MultiPartUpload id, file
                  name, the part number, part offset, part size, copy
     """
-    s3, bucket_name, mpu_id, source_name, i, start, size, max_tries, current_tries, num_parts, copy, dest_conn = args
+    s3, bucket_name, mpu_id, source_name, i, start, size, num_parts, copy, dest_conn = args
     logger.debug("do_part_upload got args: %s" % (args,))
 
     bucket = dest_conn.lookup(bucket_name)
@@ -906,17 +921,10 @@ def do_part_upload(args):
 
         # Print some timings
         t2 = time.time() - t1
-    except:
-        exc_class, exc, tb = sys.exc_info()
-        logger.debug("Retry request %d of max %d times" % (current_tries, max_tries))
-        if current_tries > max_tries:
-            logger.error(exc)
-            raise exc
-        else:
-            current_tries += 1
-            logger.warn("Error while uploading. Attempting retry #{0} of {1}".format(current_tries, max_tries))
-            time.sleep(3)
-            do_part_upload((s3, bucket_name, mpu_id, source_name, i, start, size, max_tries, current_tries, num_parts, copy, dest_conn))
+    except Exception:
+        logger.error("Error while uploading. ", exc_info=True)
+        raise
+
     s = len(data)
     logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (i+1, num_parts, human_size(s), t2, human_size(s/t2)))
 
@@ -984,7 +992,7 @@ def calculate_chunks(source_size):
 
 def url_for(key):
     """proxy generate_url in boto.Key"""
-    return key.generate_url(expires_in=0, query_auth=False)
+    return re.sub("\?.+$", "", key.generate_url(expires_in=0, query_auth=False))
 
 
 def guess_target_name(source_path, target_key):
