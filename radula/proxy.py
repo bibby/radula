@@ -1,4 +1,4 @@
-from rad import RadulaLib, RadulaError
+from rad import RadulaLib, RadulaError, from_human_size, Radula
 from boto.compat import json
 
 
@@ -59,7 +59,10 @@ class RadulaProxy(object):
         if not target:
             raise RadulaError("Missing bucket/key target")
 
-        self.lib.upload_threads = int(kwargs.get("threads"))
+        self.lib.thread_count = int(kwargs.get("threads"))
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
         self.lib.upload(subject, target, verify=kwargs.get("verify", False))
 
     def get(self, **kwargs):
@@ -84,13 +87,19 @@ class RadulaProxy(object):
         return self.remove(**kwargs)
 
     def remove(self, **kwargs):
-        """removes a remote subject key"""
+        """removes remote subject keys, any passed over the cli"""
         subject = kwargs.get("subject", None)
         if not subject:
             raise RadulaError("Missing file(s) to remove")
 
-        for key in self.lib.remove_key(subject, dry_run=kwargs.get("dry_run", False)):
-            print key
+        target = kwargs.get("target", None)
+        remainder = kwargs.get("remainder", [])
+        subject_keys = [k for k in [subject] + [target] + remainder if k]
+        dry_run = kwargs.get("dry_run", False)
+
+        for subject in subject_keys:
+            for key in self.lib.remove_key(subject, dry_run=dry_run):
+                print key
 
     def keys(self, **kwargs):
         """lists keys of a subject bucket"""
@@ -98,7 +107,7 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing bucket to list")
 
-        for key in sorted(self.lib.keys(subject)):
+        for key in sorted(self.lib.keys(subject, long_keys=kwargs.get("long_key"))):
             print key
 
     def info(self, **kwargs):
@@ -107,7 +116,33 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing remote subject key to get info for")
 
-        print json.dumps(self.lib.info(subject)).replace('\\"', '')
+        target = kwargs.get("target", None)
+        remainder = kwargs.get("remainder", [])
+
+        subject_keys = [k for k in [subject] + [target] + remainder if k]
+        actual_keys = []
+        info = []
+        for subject_key in subject_keys:
+            bucket_name, pattern = Radula.split_bucket(subject_key)
+            if not pattern:  # is not a key, but a bucket
+                info.append({
+                    "bucket": subject_key,
+                    "info": self.lib.info(subject_key)
+                })
+            else:
+                l = len(actual_keys)
+                for key in self.lib.keys(subject_key, long_keys=True):
+                    actual_keys.append(key)
+                if len(actual_keys) == l:
+                    raise RadulaError("Key not found: {0}".format(subject_key))
+
+        for subject_key in actual_keys:
+            info.append({
+                "key": subject_key,
+                "info": self.lib.info(subject_key)
+            })
+
+        print json.dumps(info).replace('\\"', '')
 
     def local_md5(self, **kwargs):
         """performs a multithreaded hash of a local subject file"""
@@ -116,6 +151,9 @@ class RadulaProxy(object):
             raise RadulaError("Missing local subject file")
 
         self.lib.thread_count = int(kwargs.get("threads"))
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
         print self.lib.local_md5(subject)
 
     def remote_md5(self, **kwargs):
@@ -136,6 +174,9 @@ class RadulaProxy(object):
             raise RadulaError("Missing remote target to compare")
 
         self.lib.thread_count = int(kwargs.get("threads"))
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
         if not self.lib.verify(subject, target):
             exit(1)
 
@@ -152,7 +193,12 @@ class RadulaProxy(object):
         subject = kwargs.get("subject", None)
         if not subject:
             raise RadulaError("Missing remote subject bucket or key to list")
-        print self.lib.multipart_list(subject)
+        bucket, uploads = self.lib.multipart_list(subject)
+        lines = []
+        for up in uploads:
+            lines.append("\t".join((up.bucket.name, up.key_name, up.id, up.initiator.display_name, up.initiated)))
+
+        print "\n".join(lines)
 
     def mpc(self, **kwargs):
         """alias of multipart_clean"""
@@ -167,7 +213,8 @@ class RadulaProxy(object):
         subject = kwargs.get("subject", None)
         if not subject:
             raise RadulaError("Missing remote subject bucket or key to clean")
-        print self.lib.multipart_clean(subject)
+        if self.lib.multipart_clean(subject):
+            print "Lingering parts removed."
 
     def sc(self, **kwargs):
         """alias of streaming-copy"""
@@ -184,6 +231,10 @@ class RadulaProxy(object):
             raise RadulaError("missing source bucket/key")
         if not dest:
             raise RadulaError("missing destination bucket/key")
+
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
 
         self.lib.streaming_copy(source, dest, dest_profile, force, verify)
 

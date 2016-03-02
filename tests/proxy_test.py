@@ -15,6 +15,7 @@ REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 
 
 def args_test():
+    # ( input string, { expected output args } )
     test_sets = (
         (
             "local-md5 file",
@@ -221,8 +222,9 @@ def dl_method(method, test_set):
     radu.upload(**args)
     sys.stdout.truncate(0)
 
-    args = vars(_parse_args([method, '-f']))
+    args = vars(_parse_args([method]))
     args.update(test_set)
+    args.update({"force": True})
     getattr(radu, args.get("command"))(**args)
 
     out = sys.stdout.getvalue().strip()
@@ -343,10 +345,13 @@ def key_info_test():
     radu.info(subject=REMOTE_FILE)
 
     out = sys.stdout.getvalue().strip()
-    info = json.loads(out)
-    for k in ('content_length', 'owner', 'size', 'bucket'):
+    info = json.loads(out)[0]
+    for k in ('key', 'info'):
         assert_in(k, info)
-    assert_equal(info.get("bucket"), TEST_BUCKET)
+    key_info = info.get("info")
+    for k in ('content_length', 'owner', 'size', 'bucket'):
+        assert_in(k, key_info)
+    assert_equal(key_info.get("bucket"), TEST_BUCKET)
 
 
 @mock_s3
@@ -362,10 +367,13 @@ def bucket_info_test():
     sys.stdout.truncate(0)
     radu.info(subject=TEST_BUCKET)
     out = sys.stdout.getvalue().strip()
-    info = json.loads(out)
-    for k in ('keys', 'size_human', 'size'):
+    info = json.loads(out)[0]
+    for k in ('bucket', 'info'):
         assert_in(k, info)
-    key_info = info.get("keys")
+    bucket_info = info.get("info")
+    for k in ('keys', 'size_human', 'size'):
+        assert_in(k, bucket_info)
+    key_info = bucket_info.get("keys")
     for k in ('count', 'largest', 'newest', 'oldest'):
         assert_in(k, key_info)
 

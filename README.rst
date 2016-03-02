@@ -92,21 +92,21 @@ to right.
 
     $ radula -h
     usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-                  [-d DESTINATION] [-f] [-y] [-n]
-                  [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,
-    up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy,
-    cat
-    }]
-                  [subject] [target]
+                  [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-n]
+                  [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,u
+    p,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy
+    ,cat}]
+                  [subject] [target] ...
 
     RadosGW client
 
-    positional arguments:                                                                                                                      [2/643]
+    positional arguments:
       {get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,
     dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,local-md5,remote-md5,verify,sc,streaming-copy,cat}
                             command
       subject               Subject
       target                Target
+      remainder             Additional targets for supporting commands. See README
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -114,14 +114,18 @@ to right.
       -r, --read            During a user grant, permission includes reads
       -w, --write           During a user grant, permission includes writes
       -t THREADS, --threads THREADS
-                            Number of threads to use for uploads. Default=10
+                          Number of threads to use for uploads. Default=10
       -p PROFILE, --profile PROFILE
-                            Boto profile. Overrides AWS_PROFILE environment var
+                          Boto profile. Overrides AWS_PROFILE environment var
       -d DESTINATION, --destination DESTINATION
-                            Destination boto profile, required for streaming copy
+                          Destination boto profile, required for streaming copy
       -f, --force           Overwrite local files without confirmation
-      -y, --verify          Verify uploads after they complete
+      -y, --verify          Verify uploads after they complete. Uses --threads
+      -c CHUNK_SIZE, --chunk CHUNK_SIZE
+                          multipart upload chunk size in bytes.
+      -l, --long-keys       prepends bucketname to key results.
       -n, --dry-run         Print would-be deletions without deleting
+
 
 Examples
 --------
@@ -497,6 +501,24 @@ mentioned above and tests their outputs for likeness.
 
 To view raw metadata about a remote target, use ``info [remote_file]``.
 The output will contain the etag and other data in JSON format.
+
+deletion
+~~~~~~~~
+
+Remote objects can be deleted using the commands `rm` or `remove`. While the majority of `radula` commands follow the position pattern of `subject, target`, the deletion command operates exclusively on remote objects. Therefore, it is one of the few that accept an arbitrary number of arguments. Globs are supported **if** they are quoted so as not to expand in the shell.
+
+Use the `-n`,`--dry-run` flag to preview deletions without making any changes.
+
+::
+    
+    [bibby@machine ~]$ radula --dry-run rm mybucket/x
+    DRY-RUN: rm mybucket/x
+    
+    [bibby@machine ~]$ radula rm mybucket/x 'mybucket/y*'
+    x
+    y1
+    y2
+
 
 Cleaning up messes
 ------------------

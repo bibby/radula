@@ -11,6 +11,11 @@ radula contributors
   * managing bibby
   * Streaming Copy
 
+* **[Charles Vaske](https://github.com/cvaske)**
+
+  * *SIGPIPE* contribution
+  * science!
+
 * **[hashhsah](https://github.com/hashhsah)**
 
   * bugfix #4

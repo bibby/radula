@@ -1,4 +1,5 @@
 import sys
+import errno
 import argparse
 import logging
 from rad import Radula, RadulaError, RadulaClient, config_check
@@ -134,6 +135,19 @@ def _parse_args(arg_string=None):
     )
 
     args.add_argument(
+        '-c', '--chunk',
+        dest='chunk_size',
+        help='multipart upload chunk size in bytes.'
+    )
+
+    args.add_argument(
+        '-l', '--long-keys',
+        dest='long_key',
+        action='store_true',
+        help='prepends bucketname to key results.'
+    )
+
+    args.add_argument(
         '-n', '--dry-run',
         dest='dry_run',
         action='store_true',
@@ -161,6 +175,13 @@ def _parse_args(arg_string=None):
         help='Target'
     )
 
+    args.add_argument(
+        'remainder',
+        nargs=argparse.REMAINDER,
+        action='store',
+        help='Additional targets for supporting commands. See README'
+    )
+
     options = args.parse_args(arg_string or sys.argv[1:])
     if not options.command and not options.version:
         args.print_help()
@@ -173,6 +194,11 @@ def main():
         _real_main()
     except KeyboardInterrupt:
         sys.exit('\nERROR: Interrupted by user')
+    except IOError, e:
+        if e.errno != errno.EPIPE:
+            # swallow SIGPIPE, so that piping this command's output
+            # to 'head' or similar won't spoil stderr
+            raise
     except RadulaError as e:
         print "Error:", e.message
         exit(1)
