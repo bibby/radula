@@ -365,11 +365,11 @@ class Radula(RadulaClient):
 
         for permission in permissions:
             if self.is_granted(acl.grants, user, permission):
-                print "User {0} already has {1} for {2} {3}, skipping".format(
-                    user, permission, target_type, target.name
-                )
+                fmt = "User {0} already has {1} for {2} {3}, skipping"
+                print fmt.format(user, permission, target_type, target.name)
                 continue
-            print "granting {0} to {1} on {2} {3}".format(permission, user, target_type, target.name)
+            fmt = "granting {0} to {1} on {2} {3}"
+            print fmt.format(permission, user, target_type, target.name)
             acl.add_user_grant(permission, user)
 
         target.set_acl(policy)
@@ -421,7 +421,8 @@ class Radula(RadulaClient):
         acl = policy.acl
 
         grant_count = len(acl.grants)
-        acl.grants = [g for g in acl.grants if self.grant_filter(g, user, permissions, policy.owner.id, target)]
+        acl_args = (user, permissions, policy.owner.id, target)
+        acl.grants = [g for g in acl.grants if self.grant_filter(g, *acl_args)]
         if len(acl.grants) != grant_count:
             target.set_acl(policy)
         else:
@@ -450,7 +451,8 @@ class Radula(RadulaClient):
         if grant.id != user:
             return True
         if grant.permission in permissions:
-            print "Grant dropped: user={0}, permission={1} on {2}".format(grant.id, grant.permission, subject)
+            fmt = "Grant dropped: user={0}, permission={1} on {2}"
+            print fmt.format(grant.id, grant.permission, subject)
             return False
         return True
 
@@ -504,7 +506,8 @@ class RadulaLib(RadulaClient):
             msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
             raise RadulaError(msg.format(bucket_name, target_key, e.message))
 
-    def _start_upload(self, source, bucket, key_name, verify=False, copy_from_key=False, dest_conn=None):
+    def _start_upload(self, source, bucket, key_name,
+                      verify=False, copy_from_key=False, dest_conn=None):
         if copy_from_key:
             source_name = source
             source_size = source.size
@@ -519,7 +522,7 @@ class RadulaLib(RadulaClient):
         metadata = {
             RadulaHeaders.get('version'): __version__,
             RadulaHeaders.get("parts"): num_parts,
-            RadulaHeaders.get("chunk_size"): chunk_size
+            RadulaHeaders.get("chunk_size"): chunk_size,
         }
 
         if num_parts == 1:
@@ -615,12 +618,14 @@ class RadulaLib(RadulaClient):
         try:
             # Create a pool of workers
             pool = ParallelSim(processes=self.thread_count, label="Upload Progress")
-            for args in gen_args(num_parts,  copy_from_key):
+            for args in gen_args(num_parts, copy_from_key):
                 pool.add(do_part_upload, args)
             pool.run()
             if not pool.completed():
                 cancel_if_missing = False
-                raise RadulaError("Multipart upload tasks completed, but not all parts called back. Try resuming.")
+                msg = """Multipart upload tasks completed,
+                      but not all parts called back. Try resuming."""
+                raise RadulaError(msg)
             if cancel_if_missing:
                 mpu.complete_upload()
         except KeyboardInterrupt:
@@ -696,13 +701,17 @@ class RadulaLib(RadulaClient):
             def progress_callback(a, b):
                 percentage = 0
                 if a:
-                    percentage = 100 * (float(a)/float(b))
+                    percentage = 100 * (float(a) / float(b))
                 print "Download Progress: %.2f%%" % percentage
 
             t1 = time.time()
-            boto_key.get_contents_to_filename(target, cb=progress_callback, num_cb=self.PROGRESS_CHUNKS)
+            boto_key.get_contents_to_filename(
+                target,
+                cb=progress_callback,
+                num_cb=self.PROGRESS_CHUNKS
+            )
             t2 = time.time()
-            print_timings(boto_key.size, t2-t1, "downloading")
+            print_timings(boto_key.size, t2 - t1, "downloading")
         except S3ResponseError as e:
             msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
             raise RadulaError(msg.format(bucket_name, key_name, e.message))
@@ -917,7 +926,8 @@ class RadulaLib(RadulaClient):
             return True
         else:
             logger.error("LocalMD5: {0} ; RemoteMD5: {1}".format(local_md5, remote_md5))
-            print >> sys.stderr, "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}".format(local_md5, remote_md5)
+            fmt = "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}"
+            print >> sys.stderr, fmt.format(local_md5, remote_md5)
             return False
 
     def multipart_list(self, subject):
@@ -1065,7 +1075,9 @@ def do_part_upload(*args):
                  The arguments are: S3, Bucket name, MultiPartUpload id, file
                  name, the part number, part offset, part size, copy
     """
-    s3, bucket_name, mpu_id, source_name, part_num, start, size, num_parts, is_copy, dest_conn, check_existing_parts = args
+    (s3, bucket_name, mpu_id, source_name, part_num, start,
+     size, num_parts, is_copy, dest_conn, check_existing_parts) = args
+
     logger.debug("do_part_upload got args: %s" % (args,))
 
     bucket = dest_conn.lookup(bucket_name)
@@ -1100,13 +1112,21 @@ def do_part_upload(*args):
                 break
 
     if skip_part and part:
-        logging.info("MPU: %s, Part %d upload skipped. Etag %s exists.", mpu.id, part_num+1, part.etag)
+        fmt = "MPU: %s, Part %d upload skipped. Etag %s exists."
+        logging.info(fmt, mpu.id, part_num + 1, part.etag)
         return True
 
     # Read the chunk from the file
     if is_copy:
-        range_query = "bytes=%d-%d" % (start, (start+size-1))
-        resp = s3.make_request("GET", bucket=source_name[0], key=source_name[1], headers={'Range': range_query})
+        range_query = "bytes=%d-%d" % (start, (start + size - 1))
+        resp = s3.make_request(
+            "GET",
+            bucket=source_name[0],
+            key=source_name[1],
+            headers={
+                'Range': range_query
+            }
+        )
         data = resp.read()
     else:
         if not data:
@@ -1115,12 +1135,12 @@ def do_part_upload(*args):
         raise Exception("Unexpectedly tried to read an empty chunk")
 
     def progress(x, y):
-        logger.debug("Part %d: %0.2f%%" % (part_num+1, 100.*x/y))
+        logger.debug("Part %d: %0.2f%%" % (part_num + 1, 100. * x / y))
 
     try:
         # Do the upload
         t1 = time.time()
-        mpu.upload_part_from_file(StringIO(data), part_num+1, cb=progress)
+        mpu.upload_part_from_file(StringIO(data), part_num + 1, cb=progress)
 
         # Print some timings
         t2 = time.time() - t1
@@ -1129,7 +1149,8 @@ def do_part_upload(*args):
         raise
 
     s = len(data)
-    logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (part_num+1, num_parts, human_size(s), t2, human_size(s/t2)))
+    logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (
+        part_num + 1, num_parts, human_size(s), t2, human_size(s / t2)))
 
 
 def _read_chunk(source_name, start, size):
@@ -1177,8 +1198,8 @@ def file_size(src):
 
 
 def print_timings(source_size, timing, verb):
-        args = (verb, human_size(source_size), timing, human_size(source_size / timing))
-        logger.info("Finished %s %s in %0.2fs (%sps)" % args)
+    args = (verb, human_size(source_size), timing, human_size(source_size / timing))
+    logger.info("Finished %s %s in %0.2fs (%sps)" % args)
 
 
 def print_url(key):

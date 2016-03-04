@@ -1,10 +1,10 @@
-from argparse import ArgumentTypeError
 import inspect
-from nose.tools import raises
-from nose.tools import assert_equal
-from radula import *
-from radula.rad import human_size, guess_target_name, calculate_chunks, RadulaLib, _mib, _gib, \
-    from_human_size, _mb, _gb, legacy_calculate_chunks
+from argparse import ArgumentTypeError
+from nose.tools import raises, assert_equal
+from radula.rad import Radula, RadulaLib, _gib, _gb, _mib, _mb, \
+    human_size, from_human_size, calculate_chunks, legacy_calculate_chunks, \
+    guess_target_name
+from radula import check_negative
 
 _tib = _gib * 1024
 
@@ -106,8 +106,8 @@ def test_from_human_size():
         yield comp_from_human_size, _in, _out, RadulaLib.MIN_CHUNK, default
 
 
-def comp_from_human_size(_in, expected, min, default):
-    assert_equal(expected, from_human_size(str(_in), minimum=min, default=default))
+def comp_from_human_size(_in, expected, minimum, default):
+    assert_equal(expected, from_human_size(str(_in), minimum=minimum, default=default))
 
 
 def guess_target_name_test():
@@ -229,4 +229,3 @@ def comp_legacy_chunk_size(lineno, size, num, chunk):
     actual_num, actual_chunk = legacy_calculate_chunks(size)
     assert_equal(num, actual_num, m("chunk count", num, actual_num))
     assert_equal(chunk, actual_chunk, m("chunk size", chunk, actual_chunk))
-

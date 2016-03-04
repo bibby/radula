@@ -161,8 +161,12 @@ def up_method(method, test_set):
         "Checksum Verified!"
     ]
 
+    fmt = "Expecting log message containing '{0}'"
     for msg in msgs:
-        assert_true(handler.matches(message=msg), msg="Expecting log message containing '{0}'".format(msg))
+        assert_true(
+            handler.matches(message=msg),
+            msg=fmt.format(msg)
+        )
 
 
 def test_download_fail():
@@ -246,6 +250,7 @@ def dl_method(method, test_set):
 def keys_fail_test():
     RadulaProxy(connection=boto.connect_s3()).keys(subject=TEST_BUCKET)
 
+
 @mock_s3
 def key_test():
     radu = RadulaProxy(connection=boto.connect_s3())
@@ -306,10 +311,19 @@ def rm_method(method):
         radu.keys(subject=TEST_BUCKET)
         keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
 
-        assert_not_in(absent_key, keys, msg="Expecting absence of key mention '{0}'".format(absent_key))
+        fmt = "Expecting absence of key mention '{0}'"
+        assert_not_in(
+            absent_key,
+            keys,
+            msg=fmt.format(absent_key))
         for expected_key in expected:
             expected_key = os.path.basename(expected_key)
-            assert_in(expected_key, keys, msg="Expecting output containing '{0}'".format(expected_key))
+            fmt = "Expecting output containing '{0}'"
+            assert_in(
+                expected_key,
+                keys,
+                msg=fmt.format(expected_key)
+            )
 
 
 @mock_s3
@@ -412,7 +426,7 @@ def local_md5_threads_test():
 
 @mock_s3
 @raises(RadulaError)
-def local_md5_threads_test():
+def local_md5_fail_test():
     radu = RadulaProxy(connection=boto.connect_s3())
     args = vars(_parse_args(["local-md5"]))
     args.update({
@@ -539,7 +553,8 @@ def verify_test():
     ]
 
     for msg in msgs:
-        assert_true(handler.matches(message=msg), msg="Expecting log message containing '{0}'".format(msg))
+        fmt = "Expecting log message containing '{0}'"
+        assert_true(handler.matches(message=msg), msg=fmt.format(msg))
 
 
 def copy_test():
@@ -582,12 +597,14 @@ def copy_method(method):
     ]
 
     for msg in msgs:
-        assert_true(handler.matches(message=msg), msg="Expecting log message containing '{0}'".format(msg))
+        fmt = "Expecting log message containing '{0}'"
+        assert_true(handler.matches(message=msg), msg=fmt.format(msg))
 
     radu.keys(subject=TEST_BUCKET)
     keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
     expected = [REMOTE_FILE, target_file]
 
+    fmt = "Expecting output containing '{0}'"
     for expected_key in expected:
         expected_key = os.path.basename(expected_key)
-        assert_in(expected_key, keys, msg="Expecting output containing '{0}'".format(expected_key))
+        assert_in(expected_key, keys, msg=fmt.format(expected_key))

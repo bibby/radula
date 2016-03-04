@@ -17,6 +17,7 @@
 #
 from logging.handlers import BufferingHandler
 
+
 class TestHandler(BufferingHandler):
     def __init__(self, matcher):
         # BufferingHandler takes a "capacity" argument
@@ -44,6 +45,7 @@ class TestHandler(BufferingHandler):
                 result = True
                 break
         return result
+
 
 class Matcher(object):
 

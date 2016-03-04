@@ -196,7 +196,14 @@ class RadulaProxy(object):
         bucket, uploads = self.lib.multipart_list(subject)
         lines = []
         for up in uploads:
-            lines.append("\t".join((up.bucket.name, up.key_name, up.id, up.initiator.display_name, up.initiated)))
+            up_fields = (
+                up.bucket.name,
+                up.key_name,
+                up.id,
+                up.initiator.display_name,
+                up.initiated,
+            )
+            lines.append("\t".join(up_fields))
 
         print "\n".join(lines)
 

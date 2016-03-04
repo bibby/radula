@@ -4,7 +4,6 @@ import argparse
 import logging
 from rad import Radula, RadulaError, RadulaClient, config_check
 from proxy import RadulaProxy
-
 from ._version import get_versions
 
 __version__ = get_versions()['version']
@@ -202,7 +201,3 @@ def main():
     except RadulaError as e:
         print "Error:", e.message
         exit(1)
-
-from ._version import get_versions
-__version__ = get_versions()['version']
-del get_versions
