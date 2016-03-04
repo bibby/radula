@@ -811,7 +811,7 @@ class RadulaLib(RadulaClient):
 
     def remote_md5(self, subject):
         """fetch hash from metadata of a remote subject key"""
-        if type(subject) is boto.s3.key.Key:
+        if isinstance(subject, boto.s3.key.Key):
             return subject.etag.translate(None, '"')
         else:
             bucket_name, key_name = Radula.split_key(subject)
@@ -828,7 +828,7 @@ class RadulaLib(RadulaClient):
                 raise
 
     def multipart_info(self, subject):
-        if type(subject) is boto.s3.key.Key:
+        if isinstance(subject, boto.s3.key.Key):
             items = {}
             for k, v in subject.metadata.items():
                 if k in RadulaHeaders.values():
@@ -1179,10 +1179,10 @@ def config_check():
         if not config or not os.path.exists(config):
             continue
         mode = os.stat(config).st_mode
-        if mode & 077:
+        if mode & 0o77:
             message = 'Boto config file "{0}" is mode {1}. Recommend ' \
                       'changing to 0600 to avoid exposing credentials'
-            message = message.format(config, oct(mode & 0777))
+            message = message.format(config, oct(mode & 0o777))
             print_warning(message)
 
         if not os.access(config, os.R_OK):
@@ -1258,6 +1258,7 @@ def print_warning(message):
 
 
 class ParallelSim(object):
+
     def __init__(self, processes=2, label="Progress"):
         self.pool = Pool(processes=processes)
         self.total_processes = 0

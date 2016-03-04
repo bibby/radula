@@ -193,7 +193,7 @@ def main():
         _real_main()
     except KeyboardInterrupt:
         sys.exit('\nERROR: Interrupted by user')
-    except IOError, e:
+    except IOError as e:
         if e.errno != errno.EPIPE:
             # swallow SIGPIPE, so that piping this command's output
             # to 'head' or similar won't spoil stderr
