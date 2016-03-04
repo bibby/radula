@@ -820,7 +820,11 @@ class RadulaLib(RadulaClient):
 
     def multipart_info(self, subject):
         if type(subject) is boto.s3.key.Key:
-            return {k: v for k, v in subject.metadata.items() if k in RadulaHeaders.values()}
+            items = {}
+            for k, v in subject.metadata.items():
+                if k in RadulaHeaders.values():
+                    items[k] = v
+            return items
         else:
             bucket_name, key_name = Radula.split_key(subject)
             try:
