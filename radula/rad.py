@@ -93,8 +93,9 @@ class RadulaClient(object):
                     args['host'] = host
                 if boto.config.has_option(profile_name, 'is_secure'):
                     args['is_secure'] = boto.config.getbool(profile_name, 'is_secure', 'True')
-                    self._is_secure_placeholder = boto.config.getbool('Boto', 'is_secure', None)
-                    boto.config.remove_option('Boto', 'is_secure')
+                    if boto.config.has_section('Boto'):
+                        self._is_secure_placeholder = boto.config.getbool('Boto', 'is_secure', None)
+                        boto.config.remove_option('Boto', 'is_secure')
         else:
             """ not using a profile, check if port is set, because boto doesnt check"""
             port = boto.config.get('s3', 'port', None)
@@ -104,7 +105,7 @@ class RadulaClient(object):
         conn = boto.connect_s3(calling_format=boto.s3.connection.OrdinaryCallingFormat(), **args)
 
         if self._is_secure_placeholder is not None:
-            boto.config.set('Boto', 'is_secure', self._is_secure_placeholder)
+            boto.config.set('Boto', 'is_secure', str(self._is_secure_placeholder))
         return conn
 
 
