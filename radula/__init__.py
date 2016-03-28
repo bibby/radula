@@ -35,7 +35,7 @@ cmd_proxy = [
     'mpl', 'mp-list', 'multipart-list',
     'mpc', 'mp-clean', 'multipart-clean',
     'rm', 'remove',
-    'keys', 'info',
+    'keys', 'info', 'size', 'etag',
     'local-md5', 'remote-md5', 'verify',
     'sc', 'streaming-copy', 'cat'
 ]

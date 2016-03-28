@@ -85,14 +85,18 @@ class RadulaClient(object):
             args['profile_name'] = profile
             profile_name = 'profile {name}'.format(name=profile)
             if boto.config.has_section(profile_name):
+                logger.debug("profile %s exists", profile_name)
                 port = boto.config.get(profile_name, 'port', None)
                 if port:
+                    logger.debug("profile %s uses port %d", profile_name, int(port))
                     args['port'] = int(port)
                 host = boto.config.get(profile_name, 'host', None)
                 if host:
+                    logger.debug("profile %s uses host %s", profile_name, host)
                     args['host'] = host
                 if boto.config.has_option(profile_name, 'is_secure'):
                     args['is_secure'] = boto.config.getbool(profile_name, 'is_secure', 'True')
+                    logger.debug("profile %s is secure %s", profile_name, args['is_secure'])
                     if boto.config.has_section('Boto'):
                         self._is_secure_placeholder = boto.config.getbool('Boto', 'is_secure', None)
                         boto.config.remove_option('Boto', 'is_secure')
@@ -578,8 +582,7 @@ class RadulaLib(RadulaClient):
         if dest_conn is None:
             dest_conn = self.conn
 
-        print os.path.join(bucket.name, key_name)
-        mpu = self.find_multipart_upload(os.path.join(bucket.name, key_name))
+        mpu = self.find_multipart_upload(os.path.join(bucket.name, key_name), dest_conn)
         check_existing_parts = False
         if mpu:
             logger.info("Recovered upload in progress: mpu.id %s", mpu.id)
@@ -931,10 +934,11 @@ class RadulaLib(RadulaClient):
             print >> sys.stderr, fmt.format(local_md5, remote_md5)
             return False
 
-    def multipart_list(self, subject):
+    def multipart_list(self, subject, conn=None):
         """lists lingering multipart upload parts """
         bucket_name, key_name = Radula.split_bucket(subject)
-        bucket = self.conn.get_bucket(bucket_name)
+        conn = conn or self.conn
+        bucket = conn.get_bucket(bucket_name)
 
         uploads = bucket.list_multipart_uploads()
         if key_name:
@@ -942,9 +946,9 @@ class RadulaLib(RadulaClient):
 
         return bucket, uploads
 
-    def find_multipart_upload(self, subject):
+    def find_multipart_upload(self, subject, conn=None):
         bucket, key = Radula.split_bucket(subject, require_key=True)
-        _buck, uploads = self.multipart_list(bucket)
+        _buck, uploads = self.multipart_list(bucket, conn)
         for up in uploads:
             key_name = key
             bucket_name = bucket

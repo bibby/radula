@@ -1,4 +1,4 @@
-from rad import RadulaLib, RadulaError, from_human_size, Radula
+from rad import RadulaLib, RadulaError, human_size, from_human_size, Radula
 from boto.compat import json
 
 
@@ -111,6 +111,9 @@ class RadulaProxy(object):
             print key
 
     def info(self, **kwargs):
+        print json.dumps(self.__info(**kwargs)).replace('\\"', '')
+
+    def __info(self, **kwargs):
         """prints metadata for a remote subject key"""
         subject = kwargs.get("subject", None)
         if not subject:
@@ -142,7 +145,21 @@ class RadulaProxy(object):
                 "info": self.lib.info(subject_key)
             })
 
-        print json.dumps(info).replace('\\"', '')
+        return info
+
+    def size(self, **kwargs):
+        for item in self.__info(**kwargs):
+            if item.get("bucket"):
+                print "\t".join([item.get("bucket"), item.get("info").get("size_human")])
+            if item.get("key"):
+                print "\t".join([item.get("key"), human_size(float(item.get("info").get("content_length")))])
+
+    def etag(self, **kwargs):
+        for item in self.__info(**kwargs):
+            if item.get("key"):
+                info = item.get("info")
+                meta = ", ".join(["%s: %s" % (k, v) for k, v in info.get("metadata", {}).iteritems()])
+                print "\t".join([item.get("key"), info.get("etag"), meta])
 
     def local_md5(self, **kwargs):
         """performs a multithreaded hash of a local subject file"""
