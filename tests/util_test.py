@@ -1,9 +1,9 @@
 import inspect
 from argparse import ArgumentTypeError
 from nose.tools import raises, assert_equal
-from radula.rad import Radula, RadulaLib, _gib, _gb, _mib, _mb, \
-    human_size, from_human_size, calculate_chunks, legacy_calculate_chunks, \
-    guess_target_name
+from radula.rad import (Radula, RadulaLib, _gib, _gb, _mib, _mb, RadulaError,
+                        human_size, from_human_size, calculate_chunks,
+                        legacy_calculate_chunks, guess_target_name, must_have)
 from radula import check_negative
 
 _tib = _gib * 1024
@@ -107,7 +107,8 @@ def test_from_human_size():
 
 
 def comp_from_human_size(_in, expected, minimum, default):
-    assert_equal(expected, from_human_size(str(_in), minimum=minimum, default=default))
+    assert_equal(expected, from_human_size(str(_in),
+                                           minimum=minimum, default=default))
 
 
 def guess_target_name_test():
@@ -174,8 +175,10 @@ def test_chunk_size():
 
 def comp_chunk_size(lineno, size, num, chunk):
     def m(label, expected, actual):
-        msg = "line {0}: Given size {1} ({2}), expected {3} of {4}; received {5}"
-        return msg.format(lineno, size, human_size(size), label, expected, actual)
+        msg = "line {0}: Given size {1} ({2}), "
+        msg = msg + "expected {3} of {4}; received {5}"
+        return msg.format(lineno, size, human_size(size),
+                          label, expected, actual)
 
     actual_num, actual_chunk = calculate_chunks(size)
     assert_equal(num, actual_num, m("chunk count", num, actual_num))
@@ -223,9 +226,50 @@ def test_legacy_chunk_size():
 
 def comp_legacy_chunk_size(lineno, size, num, chunk):
     def m(label, expected, actual):
-        msg = "line {0}: Given size {1} ({2}), expected {3} of {4}; received {5}"
-        return msg.format(lineno, size, human_size(size), label, expected, actual)
+        msg = "line {0}: Given size {1} ({2}), "
+        msg = msg + "expected {3} of {4}; received {5}"
+        return msg.format(lineno, size, human_size(size),
+                          label, expected, actual)
 
     actual_num, actual_chunk = legacy_calculate_chunks(size)
     assert_equal(num, actual_num, m("chunk count", num, actual_num))
     assert_equal(chunk, actual_chunk, m("chunk size", chunk, actual_chunk))
+
+
+def test_key_name():
+    test_set = (
+        ('foo', 'bar', False, 'foo'),
+        ('foo', 'bar', True, 'bar/foo')
+    )
+
+    for key, bucket, long_key, expected in test_set:
+        assert_equal(expected, RadulaLib._key_name(key, bucket, long_key))
+
+
+def test_must_have__and_does():
+    must_have(True, "message")
+
+
+@raises(RadulaError)
+def test_must_have__and_doesnt():
+    must_have(False, "message")
+
+
+def test_must_have__and_formats():
+    expected = "hello foo and bar"
+    try:
+        must_have(False, "hello {0} and {1}", "foo", "bar")
+    except RadulaError as e:
+        actual = e.message
+
+    assert_equal(expected, actual)
+
+
+def test_must_have__and_extra_formats():
+    expected = "nothing to add"
+    try:
+        must_have(False, expected, "foo", "bar")
+    except RadulaError as e:
+        actual = e.message
+
+    assert_equal(expected, actual)

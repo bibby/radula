@@ -70,7 +70,8 @@ def _real_main():
 def check_negative(value):
     int_value = int(value)
     if int_value < 0:
-        raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+        msg = "%s is an invalid positive int value" % value
+        raise argparse.ArgumentTypeError(msg)
     return int_value
 
 
@@ -100,11 +101,12 @@ def _parse_args(arg_string=None):
     )
 
     default_threads = RadulaClient.DEFAULT_UPLOAD_THREADS
+    thread_help = 'Number of threads to use for uploads. Default={0}'
     args.add_argument(
         '-t', '--threads',
         dest='threads',
         default=default_threads,
-        help='Number of threads to use for uploads. Default={0}'.format(default_threads)
+        help=thread_help.format(default_threads)
     )
 
     args.add_argument(

@@ -8,10 +8,15 @@ from radula import RadulaProxy, _parse_args, Radula, RadulaError
 
 
 TEST_BUCKET = "tests"
-TEST_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data.txt")
+here = os.path.dirname(os.path.realpath(__file__))
+TEST_FILE = os.path.join(here, "data.txt")
 REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 PRIMARY_USER = 'test-user'
 ALT_USER = 'alt-user'
+
+aws_url = "http://acs.amazonaws.com/groups/global"
+aws_auth = aws_url + "/AuthenticatedUsers"
+aws_all = aws_url + "/AllUsers"
 
 
 def test_allow_user():
@@ -21,34 +26,41 @@ def test_allow_user():
         "granting READ to {0} on key {1}",
         "granting READ_ACP to {0} on key {1}",
     ]
-    read_key_messages = [m.format(ALT_USER, remote_base) for m in read_key_messages]
+    read_key_messages = [m.format(ALT_USER, remote_base)
+                         for m in read_key_messages]
 
     write_key_messages = [
         "granting WRITE to {0} on key {1}",
         "granting WRITE_ACP to {0} on key {1}",
     ]
-    write_key_messages = [m.format(ALT_USER, remote_base) for m in write_key_messages]
+    write_key_messages = [m.format(ALT_USER, remote_base)
+                          for m in write_key_messages]
 
     read_bucket_messages = [
         "granting READ to {0} on bucket {1}",
         "granting READ_ACP to {0} on bucket {1}",
     ]
-    read_bucket_messages = [m.format(ALT_USER, TEST_BUCKET) for m in read_bucket_messages]
+    read_bucket_messages = [m.format(ALT_USER, TEST_BUCKET)
+                            for m in read_bucket_messages]
 
     write_bucket_messages = [
         "granting WRITE to {0} on bucket {1}",
         "granting WRITE_ACP to {0} on bucket {1}",
     ]
-    write_bucket_messages = [m.format(ALT_USER, TEST_BUCKET) for m in write_bucket_messages]
+    write_bucket_messages = [m.format(ALT_USER, TEST_BUCKET)
+                             for m in write_bucket_messages]
     key_messages = read_key_messages + write_key_messages
     bucket_messages = read_bucket_messages + write_bucket_messages
     read_messages = read_key_messages + read_bucket_messages
     write_messages = write_key_messages + write_bucket_messages
 
     test_sets = (
-        (REMOTE_FILE, '', read_key_messages, write_key_messages + bucket_messages),
-        (REMOTE_FILE, '-r', read_key_messages, write_key_messages + bucket_messages),
-        (REMOTE_FILE, '-w', write_key_messages, read_key_messages + bucket_messages),
+        (REMOTE_FILE, '', read_key_messages,
+         write_key_messages + bucket_messages),
+        (REMOTE_FILE, '-r', read_key_messages,
+         write_key_messages + bucket_messages),
+        (REMOTE_FILE, '-w', write_key_messages,
+         read_key_messages + bucket_messages),
         (REMOTE_FILE, '-rw', key_messages, bucket_messages),
         (REMOTE_FILE, '-r -w', key_messages, bucket_messages),
         (TEST_BUCKET, '', read_messages, write_messages),
@@ -88,10 +100,12 @@ def allow_user(method, test_set):
     sys.stdout.truncate(0)
 
     for msg in expected:
-        assert_in(msg, out, msg="Expecting log message containing '{0}'".format(msg))
+        errmsg = "Expecting log message containing '{0}'".format(msg)
+        assert_in(msg, out, msg=errmsg)
 
     for msg in unexpected:
-        assert_not_in(msg, out, msg="Not expecting log message containing '{0}'".format(msg))
+        errmsg = "Not expecting log message containing '{0}'".format(msg)
+        assert_not_in(msg, out, msg=errmsg)
 
 
 def test_get_acl():
@@ -143,10 +157,12 @@ def get_acl_subject(test_set):
     sys.stdout.truncate(0)
 
     for msg in expected:
-        assert_in(msg, out, msg="Expecting log message containing '{0}'".format(msg))
+        errmsg = "Expecting log message containing '{0}'".format(msg)
+        assert_in(msg, out, msg=errmsg)
 
     for msg in unexpected:
-        assert_not_in(msg, out, msg="Not expecting log message containing '{0}'".format(msg))
+        errmsg = "Not expecting log message containing '{0}'".format(msg)
+        assert_not_in(msg, out, msg=errmsg)
 
 
 def test_bad_acls():
@@ -196,7 +212,7 @@ def test_set_acl():
                 ],
                 [
                     'ACL for bucket',
-                    '[Group] http://acs.amazonaws.com/groups/global/AllUsers = READ',
+                    '[Group] {0} = READ'.format(aws_all),
                     "Setting bucket's ACL on " + key_name,
                 ]
             )
@@ -207,7 +223,7 @@ def test_set_acl():
                 [
                     'Bucket ACL for: ' + TEST_BUCKET,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AllUsers = READ',
+                    '[Group] {0} = READ'.format(aws_all),
                     "Setting bucket's ACL on " + key_name,
                 ],
                 [
@@ -219,7 +235,7 @@ def test_set_acl():
                 [
                     'ACL for key: ' + key_name,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AllUsers = READ',
+                    '[Group] {0} = READ'.format(aws_all),
                 ],
                 [
                     'ACL for bucket',
@@ -232,7 +248,7 @@ def test_set_acl():
                 [
                     'Bucket ACL for: ' + TEST_BUCKET,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AllUsers = WRITE',
+                    '[Group] {0} = WRITE'.format(aws_all),
                     "Setting bucket's ACL on " + key_name,
                 ],
                 [
@@ -244,7 +260,7 @@ def test_set_acl():
                 [
                     'ACL for key: ' + key_name,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AllUsers = WRITE',
+                    '[Group] {0} = WRITE'.format(aws_all),
                 ],
                 [
                     'ACL for bucket',
@@ -257,7 +273,7 @@ def test_set_acl():
                 [
                     'Bucket ACL for: ' + TEST_BUCKET,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AuthenticatedUsers = READ',
+                    '[Group] {0} = READ'.format(aws_auth),
                     "Setting bucket's ACL on " + key_name,
                 ],
                 [
@@ -269,7 +285,7 @@ def test_set_acl():
                 [
                     'ACL for key: ' + key_name,
                     '[CanonicalUser:OWNER] None = FULL_CONTROL',
-                    '[Group] http://acs.amazonaws.com/groups/global/AuthenticatedUsers = READ',
+                    '[Group] {0} = READ'.format(aws_auth),
                 ],
                 [
                     'ACL for bucket',
@@ -305,10 +321,12 @@ def set_acl_subject(test_set, acl):
     sys.stdout.truncate(0)
 
     for msg in expected:
-        assert_in(msg, out, msg="Expecting log message containing '{0}'".format(msg))
+        errmsg = "Expecting log message containing '{0}'".format(msg)
+        assert_in(msg, out, msg=errmsg)
 
     for msg in unexpected:
-        assert_not_in(msg, out, msg="Not expecting log message containing '{0}'".format(msg))
+        errmsg = "Not expecting log message containing '{0}'".format(msg)
+        assert_not_in(msg, out, msg=errmsg)
 
 
 def compare_acl_test():
@@ -336,7 +354,7 @@ def compare_acl_test():
                 'Difference in {0}:'.format(key_name),
                 'Keys with identical ACL: 0',
                 'Keys with different ACL: 1',
-                '[Group] http://acs.amazonaws.com/groups/global/AllUsers = WRITE',
+                '[Group] {0} = WRITE'.format(aws_all),
             ],
             []
         ),
@@ -372,7 +390,9 @@ def compare_acl(test_set):
     sys.stdout.truncate(0)
 
     for msg in expected:
-        assert_in(msg, out, msg="Expecting log message containing '{0}'".format(msg))
+        errmsg = "Expecting log message containing '{0}'".format(msg)
+        assert_in(msg, out, msg=errmsg)
 
     for msg in unexpected:
-        assert_not_in(msg, out, msg="Not expecting log message containing '{0}'".format(msg))
+        errmsg = "Not expecting log message containing '{0}'".format(msg)
+        assert_not_in(msg, out, msg=errmsg)

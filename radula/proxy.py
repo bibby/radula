@@ -39,7 +39,8 @@ class RadulaProxy(object):
 
     def list_buckets(self, **kwargs):
         """proxy list_buckets to boto"""
-        for bucket_name in sorted([bucket.name for bucket in self.lib.get_buckets()]):
+        buckets = sorted([bucket.name for bucket in self.lib.get_buckets()])
+        for bucket_name in buckets:
             print bucket_name
 
     def put(self, **kwargs):
@@ -62,7 +63,8 @@ class RadulaProxy(object):
         self.lib.thread_count = int(kwargs.get("threads"))
         chunk_size = kwargs.get("chunk_size", None)
         if chunk_size:
-            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
+            self.lib.chunk_size = from_human_size(chunk_size,
+                                                  minimum=RadulaLib.MIN_CHUNK)
         self.lib.upload(subject, target, verify=kwargs.get("verify", False))
 
     def get(self, **kwargs):
@@ -107,7 +109,8 @@ class RadulaProxy(object):
         if not subject:
             raise RadulaError("Missing bucket to list")
 
-        for key in sorted(self.lib.keys(subject, long_keys=kwargs.get("long_key"))):
+        long_key = kwargs.get("long_key")
+        for key in sorted(self.lib.keys(subject, long_key=long_key)):
             print key
 
     def info(self, **kwargs):
@@ -134,7 +137,7 @@ class RadulaProxy(object):
                 })
             else:
                 l = len(actual_keys)
-                for key in self.lib.keys(subject_key, long_keys=True):
+                for key in self.lib.keys(subject_key, long_key=True):
                     actual_keys.append(key)
                 if len(actual_keys) == l:
                     raise RadulaError("Key not found: {0}".format(subject_key))
@@ -150,15 +153,22 @@ class RadulaProxy(object):
     def size(self, **kwargs):
         for item in self.__info(**kwargs):
             if item.get("bucket"):
-                print "\t".join([item.get("bucket"), item.get("info").get("size_human")])
+                print "\t".join([
+                    item.get("bucket"),
+                    item.get("info").get("size_human")
+                    ])
             if item.get("key"):
-                print "\t".join([item.get("key"), human_size(float(item.get("info").get("content_length")))])
+                print "\t".join([
+                    item.get("key"),
+                    human_size(float(item.get("info").get("content_length")))
+                    ])
 
     def etag(self, **kwargs):
         for item in self.__info(**kwargs):
             if item.get("key"):
                 info = item.get("info")
-                meta = ", ".join(["%s: %s" % (k, v) for k, v in info.get("metadata", {}).iteritems()])
+                items = info.get("metadata", {}).iteritems()
+                meta = ", ".join(["%s: %s" % (k, v) for k, v in items])
                 print "\t".join([item.get("key"), info.get("etag"), meta])
 
     def local_md5(self, **kwargs):
@@ -170,7 +180,8 @@ class RadulaProxy(object):
         self.lib.thread_count = int(kwargs.get("threads"))
         chunk_size = kwargs.get("chunk_size", None)
         if chunk_size:
-            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
+            self.lib.chunk_size = from_human_size(chunk_size,
+                                                  minimum=RadulaLib.MIN_CHUNK)
         print self.lib.local_md5(subject)
 
     def remote_md5(self, **kwargs):
@@ -193,7 +204,8 @@ class RadulaProxy(object):
         self.lib.thread_count = int(kwargs.get("threads"))
         chunk_size = kwargs.get("chunk_size", None)
         if chunk_size:
-            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
+            self.lib.chunk_size = from_human_size(chunk_size,
+                                                  minimum=RadulaLib.MIN_CHUNK)
         if not self.lib.verify(subject, target):
             exit(1)
 
@@ -233,7 +245,8 @@ class RadulaProxy(object):
         return self.multipart_clean(**kwargs)
 
     def multipart_clean(self, **kwargs):
-        """removes lingering multipart upload parts for a remote bucket or key"""
+        """removes lingering multipart upload parts
+        for a remote bucket or key"""
         subject = kwargs.get("subject", None)
         if not subject:
             raise RadulaError("Missing remote subject bucket or key to clean")
@@ -258,7 +271,8 @@ class RadulaProxy(object):
 
         chunk_size = kwargs.get("chunk_size", None)
         if chunk_size:
-            self.lib.chunk_size = from_human_size(chunk_size, minimum=RadulaLib.MIN_CHUNK)
+            self.lib.chunk_size = from_human_size(chunk_size,
+                                                  minimum=RadulaLib.MIN_CHUNK)
 
         self.lib.streaming_copy(source, dest, dest_profile, force, verify)
 

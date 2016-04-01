@@ -6,11 +6,13 @@ from moto import mock_s3
 import sys
 import logging
 from radula import RadulaProxy, RadulaError, _parse_args, Radula
-from nose.tools import assert_equal, assert_true, raises, assert_false, assert_in, assert_not_in
+from nose.tools import (assert_equal, assert_true, raises,
+                        assert_false, assert_in, assert_not_in)
 from log_match import TestHandler, Matcher
 
 TEST_BUCKET = "tests"
-TEST_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data.txt")
+here = os.path.dirname(os.path.realpath(__file__))
+TEST_FILE = os.path.join(here, "data.txt")
 REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 
 
@@ -238,7 +240,8 @@ def dl_method(method, test_set):
     ]
 
     for msg in msgs:
-        assert_in(msg, out, msg="Expecting log message containing '{0}'".format(msg))
+        errmsg = "Expecting log message containing '{0}'".format(msg)
+        assert_in(msg, out, msg=errmsg)
     target = test_set.get("target", TEST_FILE)
     assert_true(os.path.isfile(target))
     if target != TEST_FILE:
@@ -274,7 +277,8 @@ def key_test():
 
     for expected_key in expected:
         expected_key = os.path.basename(expected_key)
-        assert_in(expected_key, keys, msg="Expecting output containing '{0}'".format(expected_key))
+        msg = "Expecting output containing '{0}'".format(expected_key)
+        assert_in(expected_key, keys, msg=msg)
 
 
 def rm_test():
@@ -305,7 +309,8 @@ def rm_method(method):
         getattr(radu, method)(subject=remove_file)
         absent_key = os.path.basename(remove_file)
         keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
-        assert_in(absent_key, keys, msg="Expecting output containing '{0}'".format(absent_key))
+        msg = "Expecting output containing '{0}'".format(absent_key)
+        assert_in(absent_key, keys, msg=msg)
         sys.stdout.truncate(0)
 
         radu.keys(subject=TEST_BUCKET)
@@ -483,7 +488,8 @@ def remote_md5_fail_test():
     # 'threads' needed
     args = vars(_parse_args(["remote-md5", "-t", "2"]))
     args.update({
-        "subject": os.path.join(TEST_BUCKET, 'test_file_not_found__intentional')
+        "subject": os.path.join(TEST_BUCKET,
+                                'test_file_not_found__intentional')
     })
     radu.remote_md5(**args)
 
