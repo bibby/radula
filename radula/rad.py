@@ -47,15 +47,15 @@ class RadulaChunkStrategy:
 
 
 class RadulaClient(object):
-    DEFAULT_UPLOAD_THREADS = 10
+    DEFAULT_THREADS = 10
     MIN_CHUNK = 1000 * 1000 * 10
     DEFAULT_CHUNK = _mb * 100
 
     def __init__(self, connection=None):
         self.conn = connection
         self.profile = None
-        self.thread_count = RadulaClient.DEFAULT_UPLOAD_THREADS
-        self.chunk_size = 0
+        self.thread_count = RadulaClient.DEFAULT_THREADS
+        self.chunk_size = Radula.DEFAULT_CHUNK
         self._is_secure_placeholder = None
 
     def connect(self, profile=None, connection=None):
@@ -492,7 +492,7 @@ class Radula(RadulaClient):
 
 class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
-    chunk_size = 0
+    chunk_size = Radula.DEFAULT_CHUNK
 
     def make_bucket(self, bucket):
         """proxy make_bucket in boto"""
@@ -522,7 +522,7 @@ class RadulaLib(RadulaClient):
                 bucket.delete_key(key)
                 yield key
 
-    def upload(self, subject, target, verify=False):
+    def upload(self, subject, target, verify=False, resume=False, force=False):
         """initiate multipart uploads of
         potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
@@ -533,10 +533,17 @@ class RadulaLib(RadulaClient):
                 msg = "No file(s) to upload: used {0}"
                 raise RadulaError(msg.format(subject))
 
+            key_names = [guess_target_name(f, target_key) for f in files]
+            if not force:
+                self.assert_missing_target(bucket, key_names)
+
+            if not resume:
+                self.assert_missing_mpu(bucket, key_names)
+
             for source_path in files:
                 key_name = guess_target_name(source_path, target_key)
                 started = self._start_upload(source_path, bucket,
-                                             key_name, verify)
+                                             key_name, verify, resume)
                 must_have(started,
                           "{0} did not correctly upload",
                           source_path)
@@ -544,8 +551,8 @@ class RadulaLib(RadulaClient):
             msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
             raise RadulaError(msg.format(bucket_name, target_key, e.message))
 
-    def _start_upload(self, source, bucket, key_name,
-                      verify=False, copy_from_key=False, dest_conn=None):
+    def _start_upload(self, source, bucket, key_name, verify=False,
+                      resume=False, copy_from_key=False, dest_conn=None):
         if copy_from_key:
             source_name = source
             source_size = source.size
@@ -581,7 +588,8 @@ class RadulaLib(RadulaClient):
                     num_parts=num_parts,
                     chunk_size=chunk_size,
                     dest_conn=dest_conn,
-                    metadata=metadata)
+                    metadata=metadata,
+                    resume=resume)
             except:
                 logger.error("Error during upload or cancelling upload",
                              exc_info=True)
@@ -613,36 +621,40 @@ class RadulaLib(RadulaClient):
 
     def _multi_part_upload(self, source, key_name, bucket,
                            copy_from_key=False, source_size=0, num_parts=0,
-                           chunk_size=0, dest_conn=None, metadata=None):
+                           chunk_size=0, dest_conn=None,
+                           metadata=None, resume=False):
         """multipart upload strategy.
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
         """
         dest_conn = dest_conn or self.conn
 
-        mpu, check_existing_parts = self._init_mpu(bucket, key_name,
-                                                   dest_conn, metadata)
+        mpu_init = self._init_mpu(bucket, key_name, dest_conn,
+                                  metadata, resume)
+
+        (mpu, existing_parts) = mpu_init
 
         msg = "Starting upload: %s (%s)"
         logger.info(msg % (mpu.id, human_size(source_size)))
         pool = None
 
-        def cancel_upload(pool, mpu):
+        def cancel_upload():
             if pool:
                 pool.terminate()
-            mpu.cancel_upload()
 
+            # # Canceling uploads will remove uploaded parts.
+            # # Not cancelling lets them resume.
+            # mpu.cancel_upload()
         try:
             # Create a pool of workers
             pool = ParallelSim(processes=self.thread_count,
                                label="Upload Progress")
 
-            upload_args = self._mpu_upload_args(source, bucket, mpu,
-                                                chunk_size, num_parts,
-                                                copy_from_key, dest_conn,
-                                                check_existing_parts)
+            args = (source, bucket, mpu, chunk_size, num_parts,
+                    copy_from_key, dest_conn, existing_parts)
 
-            for args in upload_args:
+            upload_arg_gen = self._mp_upload_args(*args)
+            for args in upload_arg_gen:
                 pool.add(do_part_upload, args)
 
             pool.run()
@@ -654,11 +666,13 @@ class RadulaLib(RadulaClient):
             mpu.complete_upload()
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, cancelling upload")
-            cancel_upload(pool, mpu)
+            cancel_upload()
+            raise
         except Exception:
             logger.error("Encountered an error, cancelling upload",
                          exc_info=True)
-            cancel_upload(pool, mpu)
+            cancel_upload()
+            raise
 
         key = bucket.get_key(key_name)
         self.sync_acl(key, bucket)
@@ -666,29 +680,39 @@ class RadulaLib(RadulaClient):
         print_url(key)
         return key
 
-    def _init_mpu(self, bucket, key_name, dest_conn, metadata):
+    def _init_mpu(self, bucket, key_name, dest_conn, metadata, resume=False):
         key_path = os.path.join(bucket.name, key_name)
-        mpu = self.find_multipart_upload(key_path, dest_conn)
-        check_existing_parts = False
-        if mpu:
-            logger.info("Recovered upload in progress: mpu.id %s", mpu.id)
-            check_existing_parts = True
-        else:
+
+        existing_parts = {}
+        mpu = None
+        logger.debug("Final resume: %s", resume)
+        if resume:
+            logger.info("Checking existing parts..")
+            mpu = self.find_multipart_upload(key_path, dest_conn)
+            if mpu:
+                logger.info("Recovered upload in progress: mpu.id %s", mpu.id)
+                for part in mpu:
+                    logger.info("PART %s = %s", part.part_number, part.etag)
+                    existing_parts[part.part_number] = part.etag
+
+        if not mpu:
             logger.info("Initializing Multipart upload")
             mpu = bucket.initiate_multipart_upload(key_name, metadata=metadata)
 
-        return mpu, check_existing_parts
+        return mpu, existing_parts
 
-    def _mpu_upload_args(self, source, bucket, mpu, chunk_size, total_parts,
-                         copy, dest_conn, check_existing_parts):
+    def _mp_upload_args(self, source, bucket, mpu, chunk_size, total_parts,
+                        copy, dest_conn, existing_parts=None):
         """Generate arguments for invocations of do_part_upload"""
+        existing_parts = existing_parts or {}
         for part_num in range(total_parts):
             chunk_start = chunk_size * part_num
             if copy:
                 name = (source.bucket.name, source.name)
             else:
                 name = source.name
-            process_args = [
+
+            process_args = (
                 self.conn,
                 bucket.name,
                 mpu.id,
@@ -699,10 +723,39 @@ class RadulaLib(RadulaClient):
                 total_parts,
                 copy,
                 dest_conn,
-                check_existing_parts
-            ]
+                existing_parts.get(part_num + 1, None),
+            )
 
-            yield tuple(process_args)
+            yield process_args
+
+    def _mp_download_args(self, key, target, num_parts, chunk_size):
+        for part_num in range(num_parts):
+            chunk_start = chunk_size * part_num
+            process_args = (
+                self.conn,
+                key,
+                target,
+                part_num,
+                chunk_start,
+                chunk_size,
+                num_parts
+            )
+            yield process_args
+
+    def assert_missing_target(self, bucket, key_names):
+        for key_name in key_names:
+            key = bucket.get_key(key_name)
+            if key:
+                msg = "Key {0}/{1} already exists. Use -f,--force to overwrite"
+                raise RadulaError(msg.format(bucket.name, key_name))
+
+    def assert_missing_mpu(self, bucket, key_names):
+        for key_name in key_names:
+            mpu = self.find_multipart_upload("/".join([bucket.name, key_name]))
+            if mpu:
+                msg = "Multipart Upload for {0}/{1} in progress. " \
+                      "Use -z,--resume if needed"
+                raise RadulaError(msg.format(bucket.name, key_name))
 
     @staticmethod
     def sync_acl(key, bucket):
@@ -725,7 +778,7 @@ class RadulaLib(RadulaClient):
                     key_policy.acl.add_user_grant(permission, bucket_owner)
                     key.set_acl(key_policy)
 
-    def download(self, subject, target, force=False):
+    def download(self, subject, target, verify=False, force=False):
         """proxy download in boto, warning user about overwrites"""
         try:
             basename = os.path.basename(subject)
@@ -742,26 +795,86 @@ class RadulaLib(RadulaClient):
                     exit(0)
 
             bucket_name, key_name = Radula.split_key(subject)
-            boto_key = self.conn.get_bucket(bucket_name).get_key(key_name)
-            must_have(boto_key, "Key not found: {0}", key_name)
+            key = self.conn.get_bucket(bucket_name).get_key(key_name)
+            must_have(key, "Key not found: {0}", key_name)
 
-            def progress_callback(a, b):
-                percentage = 0
-                if a:
-                    percentage = 100 * (float(a) / float(b))
-                print "Download Progress: %.2f%%" % percentage
+            logger.debug({
+                "size": key.size,
+                "chunk": self.chunk_size,
+                "threads": self.thread_count,
+            })
 
-            t1 = time.time()
-            boto_key.get_contents_to_filename(
-                target,
-                cb=progress_callback,
-                num_cb=self.PROGRESS_CHUNKS
-            )
-            t2 = time.time()
-            print_timings(boto_key.size, t2 - t1, "downloading")
+            if key.size <= self.chunk_size:
+                self._single_part_download(key, target)
+            else:
+                self._multipart_download(key, target)
+
+            if not verify:
+                return True
+
+            return self.verify(target, key)
+
         except S3ResponseError as e:
             msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
             raise RadulaError(msg.format(bucket_name, key_name, e.message))
+
+    def _single_part_download(self, key, target):
+        def progress_callback(a, b):
+            percentage = 0
+            if a:
+                percentage = 100 * (float(a) / float(b))
+            print "Download Progress: %.2f%%" % percentage
+
+        t1 = time.time()
+        key.get_contents_to_filename(target, cb=progress_callback,
+                                     num_cb=self.PROGRESS_CHUNKS)
+        t2 = time.time()
+        print_timings(key.size, t2 - t1, "downloading")
+        return True
+
+    def _multipart_download(self, key, target):
+        msg = "Starting download: %s (%s)"
+        logger.info(msg % (key.name, human_size(key.size)))
+        pool = None
+        num_parts, chunk_size = self.calculate_chunks(key.size)
+
+        if os.path.exists(target):
+            if not os.path.isfile(target):
+                msg = "target {0} exists, but is not a file"
+                raise RadulaError(msg.format(target))
+        else:
+            # touch file.
+            with open(target, 'a'):
+                pass
+
+        def cancel_download():
+            if pool:
+                pool.terminate()
+
+        try:
+            # Create a pool of workers
+            pool = ParallelSim(processes=self.thread_count,
+                               label="Download Progress")
+            download_args = self._mp_download_args(key, target,
+                                                   num_parts, chunk_size)
+            for args in download_args:
+                pool.add(do_part_download, args)
+
+            pool.run()
+            completed = pool.completed()
+            not_completed_msg = "Multipart download tasks completed, " \
+                                "but completed was False??."
+            must_have(completed, not_completed_msg)
+        except KeyboardInterrupt:
+            logger.warn("Received KeyboardInterrupt, cancelling download")
+            cancel_download(pool)
+        except Exception:
+            msg = "Encountered an error, cancelling download"
+            logger.error(msg, exc_info=True)
+            cancel_download(pool)
+
+        print_timings(key.size, pool.get_timing(), "downloading")
+        return key
 
     def cat(self, subject):
         """print remote file to stdout"""
@@ -1056,7 +1169,7 @@ def human_size(size, precision=2):
     return "%.*f %s" % (precision, size, suffixes[suffix_index])
 
 
-def from_human_size(size, minimum=0, default=0):
+def from_human_size(size, minimum=0, default=Radula.DEFAULT_CHUNK):
     """bytes from humanized units"""
     logger.debug("from_human_size input: %s", size)
     parts = re.split('(\d+)', size)
@@ -1119,65 +1232,112 @@ def do_part_upload(*args):
     Open the target file and read in a chunk. Since we can't pickle
     S3Connection or MultiPartUpload objects, we have to reconnect and lookup
     the MPU object with each part upload.
-
-    :type args: tuple of (string, string, string, int, int, int, boolean)
-    :param args: The actual arguments of this method. Due to lameness of
-                 multiprocessing, we have to extract these outside of the
-                 function definition.
-
-                 The arguments are: S3, Bucket name, MultiPartUpload id, file
-                 name, the part number, part offset, part size, copy
     """
-    (s3, bucket_name, mpu_id, source_name, part_num, start,
-     size, num_parts, is_copy, dest_conn, check_existing_parts) = args
-
-    logger.debug("do_part_upload got args: %s" % (args,))
-
-    bucket = dest_conn.lookup(bucket_name)
-    mpu = get_mpu_by_id(bucket, mpu_id)
-    part = False
-    data = None
-
-    if check_existing_parts and check_skip_part(source_name, mpu, part_num,
-                                                start, size, is_copy):
-        fmt = "MPU: %s, Part %d upload skipped. Etag %s exists."
-        logging.info(fmt, mpu.id, part_num + 1, part.etag)
-        return True
-
-    # Read the chunk from the file
-    if is_copy:
-        range_query = "bytes=%d-%d" % (start, (start + size - 1))
-        resp = s3.make_request(
-            "GET",
-            bucket=source_name[0],
-            key=source_name[1],
-            headers={
-                'Range': range_query
-            }
-        )
-        data = resp.read()
-    else:
-        data = _read_chunk(source_name, start, size)
-
-    must_have(data, "Unexpectedly tried to read an empty chunk")
-
-    def progress(x, y):
-        logger.debug("Part %d: %0.2f%%" % (part_num + 1, 100. * x / y))
-
     try:
-        # Do the upload
-        t1 = time.time()
-        mpu.upload_part_from_file(StringIO(data), part_num + 1, cb=progress)
+        (s3, bucket_name, mpu_id, source_name, part_num, start,
+         size, num_parts, is_copy, dest_conn, existing_part) = args
 
-        # Print some timings
-        t2 = time.time() - t1
-    except Exception:
-        logger.error("Error while uploading. ", exc_info=True)
+        logger.debug("do_part_upload got args: %s" % (args,))
+
+        bucket = dest_conn.lookup(bucket_name)
+        mpu = get_mpu_by_id(bucket, mpu_id)
+
+        if existing_part and check_skip_part(source_name, existing_part,
+                                             start, size, is_copy):
+            fmt = "MPU: %s, Part %d upload skipped."
+            logging.info(fmt, mpu.id, part_num + 1)
+            return True
+
+        # Read the chunk from the file
+        if is_copy:
+            range_query = "bytes=%d-%d" % (start, (start + size - 1))
+            resp = s3.make_request(
+                "GET",
+                bucket=source_name[0],
+                key=source_name[1],
+                headers={
+                    'Range': range_query
+                }
+            )
+            data = resp.read()
+        else:
+            data = _read_chunk(source_name, start, size)
+
+        must_have(data, "Unexpectedly tried to read an empty chunk")
+
+        def progress(x, y):
+            logger.debug("Part %d: %0.2f%%" % (part_num + 1, 100. * x / y))
+
+        try:
+            # Do the upload
+            t1 = time.time()
+            mpu.upload_part_from_file(StringIO(data), part_num + 1,
+                                      cb=progress)
+
+            # Print some timings
+            t2 = time.time() - t1
+        except Exception:
+            logger.error("Error while uploading. ", exc_info=True)
+            raise
+
+        s = len(data)
+        logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (
+            part_num + 1, num_parts, human_size(s), t2, human_size(s / t2)))
+    except KeyboardInterrupt:
+        return ParallelSim.STOP
+    except Exception as e:
+        logger.exception(e)
         raise
 
-    s = len(data)
-    logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (
-        part_num + 1, num_parts, human_size(s), t2, human_size(s / t2)))
+
+def do_part_download(*args):
+    """
+    Download a part of an S3 object using Range header
+
+    We utilize the existing S3 GET request implemented by Boto and tack on the
+    Range header. We then read chunks of the file and write out to the
+    correct position in the target file
+    """
+    try:
+        (conn, key, target, part_num,
+         chunk_start, chunk_size, num_parts) = args
+
+        # Make the S3 request
+        min_byte = chunk_start
+        max_byte = chunk_start + chunk_size
+
+        resp = conn.make_request(
+            "GET",
+            bucket=key.bucket.name,
+            key=key.name,
+            headers={
+                'Range': "bytes=%d-%d" % (min_byte, max_byte)
+            })
+
+        # Open the target file, seek to byte offset
+        fd = os.open(target, os.O_WRONLY)
+        fmt = "Opening file descriptor %d, seeking to %d"
+        logger.debug(fmt % (fd, min_byte))
+        os.lseek(fd, min_byte, os.SEEK_SET)
+
+        fmt = "Reading HTTP stream in %dM chunks"
+        logger.debug(fmt % (chunk_size/1024./1024))
+        t1 = time.time()
+        download_size = 0
+        while True:
+            data = resp.read(chunk_size)
+            if data == "":
+                break
+            os.write(fd, data)
+            download_size += len(data)
+        t2 = time.time() - t1
+        os.close(fd)
+        print_timings(download_size, t2, "downloading")
+    except KeyboardInterrupt:
+        return ParallelSim.STOP
+    except Exception as e:
+        logger.exception(e)
+        raise
 
 
 def _read_chunk(source_name, start, size):
@@ -1294,26 +1454,22 @@ def get_mpu_by_id(bucket, mpu_id):
     raise Exception("Could not find MultiPartUpload %s" % mpu_id)
 
 
-def check_skip_part(source_name, mpu, part_num, start, size, is_copy):
+def check_skip_part(source_name, existing_part, start, size, is_copy):
     skip_part = False
-    for part in mpu.get_all_parts():
-        # s3 parts are 1 based; we fed it a zero based list
-        if part.part_number == part_num + 1:
-            if is_copy:
-                skip_part = True
-            else:
-                logging.debug("Part ETAG: %s", part.etag)
-                data = _read_chunk(source_name, start, size)
-                hash_obj = md5()
-                hash_obj.update(data)
-                hex_digest = hash_obj.hexdigest()
-                logging.debug("calculated digest of local part: %s",
-                              hex_digest)
-                if part.etag == hex_digest:
-                    skip_part = True
+    if is_copy:
+        skip_part = True
+    elif existing_part:
+        logging.debug("Part ETAG: %s", existing_part)
+        data = _read_chunk(source_name, start, size)
+        hash_obj = md5()
+        hash_obj.update(data)
+        hex_digest = hash_obj.hexdigest()
+        logging.debug("calculated digest of local part: %s",
+                      hex_digest)
+        if existing_part == hex_digest:
+            skip_part = True
 
-            logging.debug("skip part: %s", skip_part)
-            break
+    logging.debug("skip part: %s", skip_part)
     return skip_part
 
 

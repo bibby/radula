@@ -6,6 +6,7 @@ logger = logging.getLogger("radula")
 
 
 class ParallelSim(object):
+    STOP = 'radula.parallel.STOP'
 
     def __init__(self, processes=2, label="Progress"):
         self.pool = Pool(processes=processes)
@@ -21,6 +22,10 @@ class ParallelSim(object):
         self.total_processes += 1
 
     def complete(self, result):
+        if result == ParallelSim.STOP:
+            self.terminate()
+            return
+
         self.results.append(result)
         self.completed_processes += 1
         logger.info(

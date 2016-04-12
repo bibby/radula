@@ -1,5 +1,8 @@
 from rad import RadulaLib, RadulaError, human_size, from_human_size, Radula
 from boto.compat import json
+import logging
+
+logger = logging.getLogger("radula")
 
 
 class RadulaProxy(object):
@@ -55,6 +58,9 @@ class RadulaProxy(object):
         """initiate a multipart upload. See README for complete usage"""
         subject = kwargs.get("subject", None)
         target = kwargs.get("target", None)
+        verify = kwargs.get("verify", False)
+        resume = kwargs.get("resume", False)
+        force = kwargs.get("force", False)
         if not subject:
             raise RadulaError("Missing file(s) to upload")
         if not target:
@@ -65,7 +71,8 @@ class RadulaProxy(object):
         if chunk_size:
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
-        self.lib.upload(subject, target, verify=kwargs.get("verify", False))
+        self.lib.upload(subject, target,
+                        verify=verify, resume=resume, force=force)
 
     def get(self, **kwargs):
         """alias of download"""
@@ -79,10 +86,20 @@ class RadulaProxy(object):
         """download remote subject to a local target file"""
         subject = kwargs.get("subject", None)
         target = kwargs.get("target", None)
+        verify = kwargs.get("verify", False)
+        force = kwargs.get("force", False)
+
         if not subject:
             raise RadulaError("Missing file(s) to download")
 
-        self.lib.download(subject, target, force=kwargs.get("force", False))
+        threads = int(kwargs.get("threads", RadulaLib.DEFAULT_THREADS))
+        self.lib.thread_count = threads
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            self.lib.chunk_size = from_human_size(chunk_size,
+                                                  minimum=RadulaLib.MIN_CHUNK)
+
+        self.lib.download(subject, target, verify=verify, force=force)
 
     def rm(self, **kwargs):
         """alias of remove"""

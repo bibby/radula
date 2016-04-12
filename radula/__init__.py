@@ -100,7 +100,7 @@ def _parse_args(arg_string=None):
         help='During a user grant, permission includes writes'
     )
 
-    default_threads = RadulaClient.DEFAULT_UPLOAD_THREADS
+    default_threads = RadulaClient.DEFAULT_THREADS
     thread_help = 'Number of threads to use for uploads. Default={0}'
     args.add_argument(
         '-t', '--threads',
@@ -153,6 +153,13 @@ def _parse_args(arg_string=None):
         dest='dry_run',
         action='store_true',
         help='Print would-be deletions without deleting'
+    )
+
+    args.add_argument(
+        '-z', '--resume',
+        dest='resume',
+        action='store_true',
+        help='Resume uploads if needed.'
     )
 
     args.add_argument(
