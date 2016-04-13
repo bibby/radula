@@ -642,7 +642,7 @@ Copy a file from first-ceph to second-ceph
 
 ``radula sc -d second mybucket/file other_bucket/file``
 
-This command used the default boto profile send ``file`` from
+The above command used the default boto profile to send ``file`` from
 ``mybucket`` located on the default ceph to the ceph defined in the
 profile named ``second``.
 

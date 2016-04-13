@@ -779,7 +779,7 @@ class RadulaLib(RadulaClient):
                     key.set_acl(key_policy)
 
     def download(self, subject, target, verify=False, force=False):
-        """proxy download in boto, warning user about overwrites"""
+        """proxy download in boto, guarding overwrites"""
         try:
             basename = os.path.basename(subject)
             target = target or basename
@@ -788,11 +788,8 @@ class RadulaLib(RadulaClient):
                 target = "/".join([target, basename])
 
             if os.path.isfile(target) and not force:
-                msg = "File {0} exists already. Overwrite? [yN]: "
-                msg = msg.format(target)
-                if not raw_input(msg).lower() == 'y':
-                    print "Aborting download."
-                    exit(0)
+                fmt = "local target file exists (use -f to overwrite): {0}"
+                raise RadulaError(fmt.format(target))
 
             bucket_name, key_name = Radula.split_key(subject)
             key = self.conn.get_bucket(bucket_name).get_key(key_name)
@@ -867,11 +864,11 @@ class RadulaLib(RadulaClient):
             must_have(completed, not_completed_msg)
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, cancelling download")
-            cancel_download(pool)
+            cancel_download()
         except Exception:
             msg = "Encountered an error, cancelling download"
             logger.error(msg, exc_info=True)
-            cancel_download(pool)
+            cancel_download()
 
         print_timings(key.size, pool.get_timing(), "downloading")
         return key
@@ -1325,7 +1322,7 @@ def do_part_download(*args):
         t1 = time.time()
         download_size = 0
         while True:
-            data = resp.read(chunk_size)
+            data = resp.read(_mb)
             if data == "":
                 break
             os.write(fd, data)
