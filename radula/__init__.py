@@ -9,10 +9,9 @@ from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
 
-logging.basicConfig(level=logging.INFO)
-
 # ACL commands
 cmd_acl = [
+    'acls',
     'get-acl',
     'set-acl',
     'compare-acl',
@@ -50,6 +49,21 @@ def _real_main():
     command = args.command.replace('-', '_')
     config_check()
     radu = Radula()
+
+    log_level = logging.INFO
+    if args.log_level:
+        if not isinstance(args.log_level, int):
+            level = getattr(logging, args.log_level)
+            print args.log_level, level, '?'
+            if isinstance(log_level, int):
+                log_level = level
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
+    )
+    logger = logging.getLogger("radula")
+    logger.info("Log Level: %d", log_level)
 
     if args.command in cmd_acl:
         radu.connect(profile=args.profile)
@@ -146,6 +160,13 @@ def _parse_args(arg_string=None):
         dest='long_key',
         action='store_true',
         help='prepends bucketname to key results.'
+    )
+
+    args.add_argument(
+        '-L', '--log-level',
+        dest='log_level',
+        default=logging.INFO,
+        help='Log level, [DEBUG, 10, INFO, 20, etc]'
     )
 
     args.add_argument(

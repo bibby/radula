@@ -26,7 +26,7 @@ def args_test():
                 "subject": "file",
                 "acl_read": False,
                 "acl_write": False,
-                "threads": Radula.DEFAULT_UPLOAD_THREADS,
+                "threads": Radula.DEFAULT_THREADS,
                 "profile": None
             },
         ),

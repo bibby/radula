@@ -517,6 +517,33 @@ to `stdout`.
     $ radula cat mybucket/hello
     Hello there you
 
+In radula 0.7+, `cat` accept the `-c`,`--chunk-size` parameter to print part of the remote file.
+Unique to this command is that the chunk param can be a range of integers or humanized units.
+If humanized units (ie, `2kb`) are used, they'll be converted into integer to conform with the
+[HTTP Range header spec](https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35).
+
+When using a range query, the end of the range may be omitted to include everything from
+the starting position to the end of the file.
+
+Omitting the first argument is not supported. Starting a range with zero (`0-n`) *does work*, but it is recommended to simply provide `n` by itself, because the **range in inclusive**. The range `0-100` would
+output 101 bytes, while input `100` returns 100.
+
+A `ValueError` will be raised if end of the range is before the starting position.
+
+::
+
+    # first two bytes
+    $ radula -c 2 cat mybucket/hello
+    he
+
+    # 2 bytes in until the end
+    $ radula -c '2-' cat mybucket/hello
+    llo
+
+    # first byte to second byte (inclusive)
+    $ radula -c '1-2' cat mybucket/hello
+    el
+
 verify uploads
 ~~~~~~~~~~~~~~
 

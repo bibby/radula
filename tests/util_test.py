@@ -111,6 +111,49 @@ def comp_from_human_size(_in, expected, minimum, default):
                                            minimum=minimum, default=default))
 
 
+def test_range_size():
+    dataset = (
+        # in, out
+        ('0-0', '0-0'),
+        ('2', '0-1'),
+        ('4b', '0-3'),
+        ('5-', '5-'),
+        ('2k-', '2000-'),
+        ('2k-25kb', '2000-25000'),
+        ('0-1kb', '0-1000'),
+        ('1kb', '0-999')
+    )
+
+    for _in, _out in dataset:
+        yield comp_range_size, _in, _out
+
+
+def comp_range_size(_in, expected):
+    assert_equal(expected, from_human_size(str(_in),
+                                           default=0,
+                                           minimum=0,
+                                           accept_range=True))
+
+
+def test_range_fail():
+    dataset = (
+        '5-3',
+        '1mb-1kb',
+        '1-0'
+    )
+
+    for _in in dataset:
+        yield comp_range_size_fail, _in
+
+
+@raises(ValueError)
+def comp_range_size_fail(_in):
+    from_human_size(str(_in), default=0,
+                    minimum=0, accept_range=True)
+
+
+
+
 def guess_target_name_test():
     test_sets = (
         # source, target, expected

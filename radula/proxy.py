@@ -18,10 +18,11 @@ class RadulaProxy(object):
     def make_bucket(self, **kwargs):
         """proxy make_bucket to boto"""
         bucket = kwargs.get("subject", None)
+        dry_run = kwargs.get("dry_run", False)
         if not bucket:
             raise RadulaError("Bucket name empty")
 
-        if self.lib.make_bucket(bucket):
+        if self.lib.make_bucket(bucket, dry_run=dry_run):
             print "Created bucket: {0}".format(bucket)
 
     def rb(self, **kwargs):
@@ -31,9 +32,10 @@ class RadulaProxy(object):
     def remove_bucket(self, **kwargs):
         """proxy remove_bucket to boto"""
         bucket = kwargs.get("subject", None)
+        dry_run = kwargs.get("dry_run", False)
         if not bucket:
             raise RadulaError("Bucket name empty")
-        if self.lib.remove_bucket(bucket):
+        if self.lib.remove_bucket(bucket, dry_run=dry_run):
             print "Removed bucket {0}".format(bucket)
 
     def lb(self, **kwargs):
@@ -61,6 +63,7 @@ class RadulaProxy(object):
         verify = kwargs.get("verify", False)
         resume = kwargs.get("resume", False)
         force = kwargs.get("force", False)
+        dry_run = kwargs.get("dry_run", False)
         if not subject:
             raise RadulaError("Missing file(s) to upload")
         if not target:
@@ -71,8 +74,8 @@ class RadulaProxy(object):
         if chunk_size:
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
-        self.lib.upload(subject, target,
-                        verify=verify, resume=resume, force=force)
+        self.lib.upload(subject, target, verify=verify,
+                        resume=resume, force=force, dry_run=dry_run)
 
     def get(self, **kwargs):
         """alias of download"""
@@ -88,6 +91,7 @@ class RadulaProxy(object):
         target = kwargs.get("target", None)
         verify = kwargs.get("verify", False)
         force = kwargs.get("force", False)
+        dry_run = kwargs.get("dry_run", False)
 
         if not subject:
             raise RadulaError("Missing file(s) to download")
@@ -99,7 +103,8 @@ class RadulaProxy(object):
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
 
-        self.lib.download(subject, target, verify=verify, force=force)
+        self.lib.download(subject, target, verify=verify,
+                          force=force, dry_run=dry_run)
 
     def rm(self, **kwargs):
         """alias of remove"""
@@ -281,20 +286,34 @@ class RadulaProxy(object):
         dest_profile = kwargs.get("destination", None)
         force = kwargs.get("force", None)
         verify = kwargs.get("verify", False)
+        dry_run = kwargs.get("dry_run", False)
         if not source:
             raise RadulaError("missing source bucket/key")
         if not dest:
             raise RadulaError("missing destination bucket/key")
 
+        self.lib.thread_count = int(kwargs.get("threads"))
         chunk_size = kwargs.get("chunk_size", None)
         if chunk_size:
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
 
-        self.lib.streaming_copy(source, dest, dest_profile, force, verify)
+        self.lib.streaming_copy(source,
+                                dest,
+                                dest_profile=dest_profile,
+                                force=force,
+                                verify=verify,
+                                dry_run=dry_run)
 
     def cat(self, **kwargs):
         source = kwargs.get("subject", None)
         if not source:
             raise RadulaError("missing source bucket/key")
-        self.lib.cat(source)
+
+        chunk_size = kwargs.get("chunk_size", None)
+        if chunk_size:
+            chunk_size = from_human_size(chunk_size,
+                                         bounds=False,
+                                         accept_range=True)
+
+        self.lib.cat(source, chunk_size=chunk_size)

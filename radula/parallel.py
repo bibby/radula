@@ -17,7 +17,6 @@ class ParallelSim(object):
         self.label = label
 
     def add(self, func, args):
-        self.timing[0] = time.time()
         self.pool.apply_async(func=func, args=args, callback=self.complete)
         self.total_processes += 1
 
@@ -38,6 +37,7 @@ class ParallelSim(object):
         self.timing[1] = time.time()
 
     def run(self):
+        self.timing[0] = time.time()
         self.pool.close()
         self.pool.join()
 
