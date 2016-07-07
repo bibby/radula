@@ -51,8 +51,6 @@ def test_allow_user():
                              for m in write_bucket_messages]
     key_messages = read_key_messages + write_key_messages
     bucket_messages = read_bucket_messages + write_bucket_messages
-    read_messages = read_key_messages + read_bucket_messages
-    write_messages = write_key_messages + write_bucket_messages
 
     test_sets = (
         (REMOTE_FILE, '', read_key_messages,
@@ -63,11 +61,11 @@ def test_allow_user():
          read_key_messages + bucket_messages),
         (REMOTE_FILE, '-rw', key_messages, bucket_messages),
         (REMOTE_FILE, '-r -w', key_messages, bucket_messages),
-        (TEST_BUCKET, '', read_messages, write_messages),
-        (TEST_BUCKET, '-r', read_messages, write_messages),
-        (TEST_BUCKET, '-rw', read_messages + write_messages, []),
-        (TEST_BUCKET, '-w', write_messages, read_messages),
-        (TEST_BUCKET, '-r -w', read_messages + write_messages, []),
+        (TEST_BUCKET, '', read_bucket_messages, write_bucket_messages),
+        (TEST_BUCKET, '-r', read_bucket_messages, write_bucket_messages),
+        (TEST_BUCKET, '-rw', read_bucket_messages + write_bucket_messages, []),
+        (TEST_BUCKET, '-w', write_bucket_messages, read_bucket_messages),
+        (TEST_BUCKET, '-r -w', read_bucket_messages + write_bucket_messages, []),
     )
     for test_set in test_sets:
         for method in methods:
@@ -101,6 +99,8 @@ def allow_user(method, test_set):
 
     for msg in expected:
         errmsg = "Expecting log message containing '{0}'".format(msg)
+        if msg not in out:
+            p = 1
         assert_in(msg, out, msg=errmsg)
 
     for msg in unexpected:

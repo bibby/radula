@@ -599,7 +599,7 @@ def copy_method(method):
         "Finished uploading",
         "tests.s3.amazonaws.com/data.txt",
         "Download URL",
-        "Checksum Verified!"
+        "Key data matches!"
     ]
 
     for msg in msgs:

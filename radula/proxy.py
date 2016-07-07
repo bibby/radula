@@ -214,6 +214,16 @@ class RadulaProxy(object):
 
         print self.lib.remote_md5(subject)
 
+    def remote_rehash(self, **kwargs):
+        """downloads a remote key in parts and recomputes the hash"""
+        subject = kwargs.get("subject", None)
+        if not subject:
+            raise RadulaError("Missing remote subject key")
+
+        self.lib.thread_count = int(kwargs.get("threads"))
+        if not self.lib.remote_rehash(subject):
+            exit(1)
+
     def verify(self, **kwargs):
         """compares hashes of a local subject and a remote target"""
         subject = kwargs.get("subject", None)
@@ -228,8 +238,14 @@ class RadulaProxy(object):
         if chunk_size:
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
-        if not self.lib.verify(subject, target):
-            exit(1)
+        dest_profile = kwargs.get("destination", None)
+        if dest_profile is None:
+            if not self.lib.verify(subject, target):
+                exit(1)
+        else:
+            if not self.lib.verify_keys(subject, target,
+                                        dest_profile=dest_profile):
+                exit(1)
 
     def mpl(self, **kwargs):
         """alias of multipart_list"""

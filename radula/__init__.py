@@ -35,7 +35,7 @@ cmd_proxy = [
     'mpc', 'mp-clean', 'multipart-clean',
     'rm', 'remove',
     'keys', 'info', 'size', 'etag',
-    'local-md5', 'remote-md5', 'verify',
+    'local-md5', 'remote-md5', 'remote-rehash', 'verify',
     'sc', 'streaming-copy', 'cat'
 ]
 
@@ -54,7 +54,6 @@ def _real_main():
     if args.log_level:
         if not isinstance(args.log_level, int):
             level = getattr(logging, args.log_level)
-            print args.log_level, level, '?'
             if isinstance(log_level, int):
                 log_level = level
 
@@ -63,7 +62,7 @@ def _real_main():
         format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
     )
     logger = logging.getLogger("radula")
-    logger.info("Log Level: %d", log_level)
+    logger.debug("Log Level: %d", log_level)
 
     if args.command in cmd_acl:
         radu.connect(profile=args.profile)
@@ -146,7 +145,7 @@ def _parse_args(arg_string=None):
         '-y', '--verify',
         dest='verify',
         action='store_true',
-        help='Verify uploads after they complete. Uses --threads'
+        help='Verify uploads after they complete. Uses --threads. When passed a destination profile, download and hash keys on both ends'
     )
 
     args.add_argument(

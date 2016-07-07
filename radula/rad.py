@@ -42,9 +42,14 @@ class RadulaChunkStrategy:
     LEGACY = 1
 
 
+class RadulaACLChange:
+    DISALLOW = 0
+    ALLOW = 1
+
+
 class RadulaClient(object):
-    DEFAULT_THREADS = 10
-    MIN_CHUNK = 1000 * 1000 * 10
+    DEFAULT_THREADS = 3
+    MIN_CHUNK = _mb * 10
     DEFAULT_CHUNK = _mb * 100
 
     def __init__(self, connection=None):
@@ -380,6 +385,8 @@ class Radula(RadulaClient):
 
         read = kwargs.get("acl_read", None)
         write = kwargs.get("acl_write", None)
+        threads = int(kwargs.get("threads", 0)) or Radula.DEFAULT_THREADS
+        recurrance = kwargs.get("recurrance", False)
         if not any([read, write]):
             read = True
 
@@ -408,18 +415,46 @@ class Radula(RadulaClient):
             if dry_run:
                 dry_run_msg('allow_user', msg)
             else:
-                print msg
+                if not recurrance:
+                    print msg
                 if add:
                     acl.add_user_grant(permission, user)
 
-        if not dry_run:
+        if dry_run:
+            dry_run_msg('allow_user',
+                        'setting new policy =>', target.name)
+        else:
             target.set_acl(policy)
+            msg = 'User {0} allowed {1} for {2} '.format(
+                user,
+                str(permissions),
+                target.name
+            )
+            if recurrance:
+                return msg
+            else:
+                print msg
 
+        logger.info("target type: %s", target_type)
         if target_type == Radula.BUCKET:
-            kwargs_copy = kwargs.copy()
-            for key in target:
-                kwargs_copy.update({"target": key})
-                self.allow_user(**kwargs_copy)
+            def mp_acl_args(rad, bucket, kwargs):
+                for key in bucket:
+                    kwargs_copy = kwargs.copy()
+                    kwargs_copy.update({
+                        "target": key,
+                        "recurrance": True
+                    })
+                    yield(rad, RadulaACLChange.ALLOW, kwargs_copy)
+
+            logger.warn("Starting recursive set_acl")
+            pool = ParallelSim(processes=threads,
+                               label="Set ACL progress")
+            for args in mp_acl_args(self, target, kwargs):
+                pool.add(do_mp_acl_set, args)
+
+            pool.run()
+            completed = pool.completed()
+            must_have(completed, "Some ACL sets did not complete.")
 
     def __grant_check(self, grants, user, permission,
                       target_type, target_name):
@@ -448,6 +483,8 @@ class Radula(RadulaClient):
         target = kwargs.get("target", None)
         must_have(target,
                   "A bucket or key is required during permission grants")
+        threads = int(kwargs.get("threads", 0)) or Radula.DEFAULT_THREADS
+        recurrance = kwargs.get("recurrance", False)
 
         permissions = []
         if kwargs.get("acl_read", None):
@@ -461,17 +498,32 @@ class Radula(RadulaClient):
         bucket, key, target, target_type = self.hone_target(target)
 
         if target_type == Radula.BUCKET:
-            kwargs_copy = kwargs.copy()
-            for key in target:
-                kwargs_copy.update({"target": key})
-                self.disallow_user(**kwargs_copy)
+            def mp_acl_args(rad, bucket, kwargs):
+                for key in bucket:
+                    kwargs_copy = kwargs.copy()
+                    kwargs_copy.update({
+                        "target": key,
+                        "recurrance": True
+                    })
+                    yield(rad, RadulaACLChange.DISALLOW, kwargs_copy)
+
+            logger.warn("Starting recursive set_acl")
+            pool = ParallelSim(processes=threads,
+                               label="Set ACL progress")
+            for args in mp_acl_args(self, target, kwargs):
+                pool.add(do_mp_acl_set, args)
+
+            pool.run()
+            completed = pool.completed()
+            must_have(completed, "Some ACL sets did not complete.")
 
         policy = target.get_acl()
         acl = policy.acl
 
         dry_run = kwargs.get("dry_run", False)
         grant_count = len(acl.grants)
-        acl_args = (user, permissions, policy.owner.id, target, dry_run)
+        acl_args = (user, permissions, policy.owner.id,
+                    target, dry_run, recurrance)
         acl.grants = [g for g in acl.grants if self.grant_filter(g, *acl_args)]
         if len(acl.grants) != grant_count:
             if dry_run:
@@ -497,7 +549,8 @@ class Radula(RadulaClient):
         return False
 
     @staticmethod
-    def grant_filter(grant, user, permissions, owner, subject, dry_run):
+    def grant_filter(grant, user, permissions, owner,
+                     subject, dry_run, recurrance=False):
         """
         Grant filter function, returning True for items that should be kept.
         Grants for the policy owner are kept.
@@ -511,11 +564,12 @@ class Radula(RadulaClient):
             return True
         if grant.permission in permissions:
             fmt = "Grant dropped: user={0}, permission={1} on {2}"
-            msg = fmt.format(grant.id, grant.permission, subject)
+            msg = fmt.format(grant.id, grant.permission, subject.name)
             if dry_run:
                 dry_run_msg('grant_filter', msg)
             else:
-                print msg
+                if not recurrance:
+                    print msg
             return False
         return True
 
@@ -597,15 +651,11 @@ class RadulaLib(RadulaClient):
         if copy_from_key:
             source_name = source
             source_size = source.size
-            remote_mp_info = self.multipart_info(source)
 
-            # TODO: allow overriding this
-            if RadulaHeaders.get('chunk_size') in remote_mp_info:
+            remote_chunk = self._remote_chunk_size(source)
+            if remote_chunk:
                 strategy = RadulaChunkStrategy.DEFAULT
-                self.chunk_size = float(remote_mp_info.get(RadulaHeaders.get('chunk_size'), 0))
-                logger.info("Found chunk_size {size} in source metadata".format(
-                    size=self.chunk_size
-                ))
+                self.chunk_size = remote_chunk
             else:
                 strategy = RadulaChunkStrategy.LEGACY
                 logger.info("Attempting to match the source object's LEGACY chunk strategy")
@@ -659,10 +709,12 @@ class RadulaLib(RadulaClient):
                              exc_info=True)
                 raise
 
-        if not verify:
+        if not copy_from_key and not verify:
             return True
-
-        return self.verify(source_name, key, copy_from_key, hashes)
+        elif copy_from_key and verify:
+            return self.verify_keys(source, key, dest_conn)
+        else:
+            return self.verify(source_name, key, copy_from_key, hashes)
 
     def _single_part_upload(self, source, key_name, bucket,
                             copy_from_key=False, source_size=0,
@@ -780,6 +832,19 @@ class RadulaLib(RadulaClient):
 
         return mpu, existing_parts
 
+    def _mp_verify_args(self, source, dest, chunk_size, total_parts):
+        for part_num in range(total_parts):
+            chunk_start = chunk_size * part_num
+            process_args = (
+                    source,
+                    dest,
+                    part_num,
+                    chunk_start,
+                    chunk_size,
+                    total_parts
+                )
+            yield process_args
+
     def _mp_upload_args(self, source, bucket, mpu, chunk_size, total_parts,
                         copy, dest_conn, existing_parts=None,
                         generate_hashes=False):
@@ -821,6 +886,13 @@ class RadulaLib(RadulaClient):
                 chunk_size,
                 num_parts
             )
+            yield process_args
+
+    def _mp_rehash_args(self, key, num_parts, chunk_size):
+        for part_num in range(num_parts):
+            chunk_start = chunk_size * part_num
+            process_args = (self.conn, key, part_num,
+                            chunk_start, chunk_size, num_parts)
             yield process_args
 
     def assert_missing_target(self, bucket, key_names):
@@ -943,6 +1015,7 @@ class RadulaLib(RadulaClient):
         try:
             # Create a pool of workers
             logger.info("ParallelSim with %d threads", self.thread_count)
+
             pool = ParallelSim(processes=self.thread_count,
                                label="Download Progress")
             download_args = self._mp_download_args(key, target,
@@ -958,13 +1031,78 @@ class RadulaLib(RadulaClient):
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, cancelling download")
             cancel_download()
+            raise
         except Exception:
             msg = "Encountered an error, cancelling download"
             logger.error(msg, exc_info=True)
             cancel_download()
+            raise
 
-        print_timings(key.size, pool.get_timing(), "downloading")
+        if pool:
+            print_timings(key.size, pool.get_timing(), "downloading")
+
         return key
+
+    def _single_part_rehash(self, key):
+        def progress_callback(a, b):
+            percentage = 0
+            if a:
+                percentage = 100 * (float(a) / float(b))
+            print "Download Progress: %.2f%%" % percentage
+
+        t1 = time.time()
+        hash_obj = md5()
+        hash_obj.update(key.get_contents_as_string(cb=progress_callback, num_cb=self.PROGRESS_CHUNKS))
+        hex_digest = hash_obj.hexdigest()
+        t2 = time.time()
+        print_timings(key.size, t2 - t1, "downloading")
+        return hex_digest
+
+    def _multipart_rehash(self, key, num_parts, chunk_size):
+        msg = "Starting download: %s (%s)"
+        logger.info(msg % (key.name, human_size(key.size)))
+        pool = None
+
+        def cancel_download():
+            if pool:
+                pool.terminate()
+
+        try:
+            # Create a pool of workers
+            logger.info("ParallelSim with %d threads", self.thread_count)
+
+            pool = ParallelSim(processes=self.thread_count,
+                               label="Download Progress")
+            download_args = self._mp_rehash_args(key, num_parts, chunk_size)
+            for args in download_args:
+                pool.add(do_part_rehash, args)
+
+            pool.run()
+            completed = pool.completed()
+            not_completed_msg = "Multipart download tasks completed, " \
+                                "but completed was False??."
+            must_have(completed, not_completed_msg)
+        except KeyboardInterrupt:
+            logger.warn("Received KeyboardInterrupt, cancelling download")
+            cancel_download()
+            raise
+        except Exception:
+            msg = "Encountered an error, cancelling download"
+            logger.error(msg, exc_info=True)
+            cancel_download()
+            raise
+
+        if pool:
+            print_timings(key.size, pool.get_timing(), "downloading")
+
+        hash_obj = md5()
+        results = sorted(pool.get_results(), key=lambda d: d[0])
+        hash_obj.update(''.join([r[1] for r in results]))
+        hex_digest = hash_obj.hexdigest()
+
+        if num_parts == 1:
+            return hex_digest
+        return '{0}-{1}'.format(hex_digest, num_parts)
 
     def cat(self, subject, chunk_size=None):
         """print remote file to stdout"""
@@ -1074,10 +1212,14 @@ class RadulaLib(RadulaClient):
         if isinstance(subject, boto.s3.key.Key):
             return subject.etag.translate(None, '"')
         else:
-            bucket_name, key_name = Radula.split_key(subject)
+            (bucket_name, key_name, key,
+             subject_type) = self.hone_target(subject)
+
+            if subject_type != Radula.KEY:
+                msg = 'Remote target is not a key! ({0})'
+                raise RadulaError(msg.format(subject))
+
             try:
-                bucket = self.conn.get_bucket(bucket_name)
-                key = bucket.get_key(key_name)
                 must_have(key, "Remote file '{0}' not found", subject)
                 return key.etag.translate(None, '"')
             except Exception as e:
@@ -1085,6 +1227,53 @@ class RadulaLib(RadulaClient):
                 logger.info("key_name: " + key_name)
                 logger.error(e.message, exc_info=True)
                 raise
+
+    def remote_rehash(self, subject):
+        expected = self.remote_md5(subject)
+
+        (bucket_name, key_name,
+            key, subject_type) = self.hone_target(subject)
+
+        must_have(subject_type == Radula.KEY, "Key not found: {0}", key_name)
+        must_have(key, "Key not found: {0}", key_name)
+
+        remote_chunk = self._remote_chunk_size(key)
+        if remote_chunk:
+            strategy = RadulaChunkStrategy.DEFAULT
+            self.chunk_size = remote_chunk
+        else:
+            strategy = RadulaChunkStrategy.LEGACY
+            logger.info("Attempting to match the source object's LEGACY chunk strategy")
+
+        num_parts, chunk_size = self.calculate_chunks(key.size, strategy=strategy)
+
+        logger.debug({
+            "size": key.size,
+            "chunk": self.chunk_size,
+            "threads": self.thread_count,
+        })
+
+        try:
+            if key.size <= self.chunk_size:
+                hex_digest = self._single_part_rehash(key)
+            else:
+                hex_digest = self._multipart_rehash(key, num_parts, chunk_size)
+        except S3ResponseError as e:
+            msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
+            raise RadulaError(msg.format(bucket_name, key_name, e.message))
+
+        logger.debug("Expected: %s, Received: %s", expected, hex_digest)
+        if expected == hex_digest:
+            logger.info("Checksum Verified!")
+            msg = "RemoteMetaData and newly computed hash @ {0}"
+            logger.info(msg.format(hex_digest))
+            return True
+        else:
+            msg = "RemoteMetaData: {0} ; ComputedHash: {1}"
+            logger.error(msg.format(expected, hex_digest))
+            fmt = "DIFFERENT CKSUMS!\nRemoteMetaData {0}\nComputedHash {1}"
+            print >> sys.stderr, fmt.format(expected, hex_digest)
+            return False
 
     def multipart_info(self, subject):
         if isinstance(subject, boto.s3.key.Key):
@@ -1163,11 +1352,72 @@ class RadulaLib(RadulaClient):
             return hex_digest
         return '{0}-{1}'.format(hex_digest, num_parts)
 
+    def verify_keys(self, source, destination, dest_conn=None, dest_profile=None):
+        """compares hashes of two keys by downloading and hashing chunks
+        """
+        source_bucket_name, source_key_name = Radula.split_bucket(source)
+        source_bucket = self.conn.get_bucket(source_bucket_name)
+        source_key = source_bucket.get_key(source_key_name)
+        if source_key is None:
+            raise RadulaError("source key does not exist")
+
+        if dest_conn is None:
+            dest_conn = self.new_connection(dest_profile)
+        dest_bucket_name, dest_key_name = Radula.split_bucket(destination)
+        dest_bucket = dest_conn.get_bucket(dest_bucket_name)
+        dest_key = dest_bucket.get_key(dest_key_name)
+        if dest_key is None:
+            raise RadulaError("destination key does not exist")
+
+        source_size = source_key.size
+        dest_size = dest_key.size
+        if source_size != dest_size:
+            msg = "source and destination keys are different size, bailing out"
+            raise RadulaError(msg)
+
+        num_parts, chunk_size = self.calculate_chunks(source_size)
+        logger.info("CHUNKS: %d parts x %s", num_parts, human_size(chunk_size))
+
+        if num_parts == 1:
+            source_data = source_key.get_contents_as_string()
+            dest_data = dest_key.get_contents_as_string()
+            if source_data != dest_data:
+                raise RadulaError("single part verify: data does not match!")
+        else:
+            def cancel_upload():
+                if pool:
+                    pool.terminate()
+            try:
+                logger.info("ParallelSim with %d threads", self.thread_count)
+                pool = ParallelSim(processes=self.thread_count,
+                                   label="Verify Keys Progress")
+
+                args = (source_key, dest_key, chunk_size, num_parts)
+                verify_arg_gen = self._mp_verify_args(*args)
+                for args in verify_arg_gen:
+                    pool.add(do_part_verify, args)
+                pool.run()
+                must_have(pool.completed(), "Some parts failed to call back")
+            except KeyboardInterrupt:
+                logger.warn("Received KeyboardInterrupt, cancelling upload")
+                cancel_upload()
+                raise
+            except Exception:
+                logger.error("Encountered an error, cancelling upload",
+                             exc_info=True)
+                cancel_upload()
+                raise
+
+        logger.info("Key data matches!")
+        return True
+
     def verify(self, subject, target, copy=False, hashes=None):
         """compares hashes of a local subject and a remote target
         or those of two remote targets
         """
-        bucket_name, key_name = Radula.split_bucket(target)
+        (bucket_name, key_name, _subject,
+         _subject_type) = self.hone_target(target)
+
         if isinstance(target, (str, unicode)):
             target_key = guess_target_name(subject, key_name)
             target = "/".join([bucket_name, target_key])
@@ -1186,9 +1436,7 @@ class RadulaLib(RadulaClient):
                     hex_digest = hash_obj.hexdigest()
                     local_md5 = '{0}-{1}'.format(hex_digest, len(hashes))
         else:
-            #  otherwise, read that file!
-            remote_mp_info = self.multipart_info(target)
-            chunk_size = remote_mp_info.get(RadulaHeaders.get('chunk_size'), 0)
+            chunk_size = self._remote_chunk_size(target)
             logger.info("remote object reports chunk size: %s", chunk_size)
             local_md5 = self.local_md5(subject, int(chunk_size))
 
@@ -1268,7 +1516,6 @@ class RadulaLib(RadulaClient):
                 "=>", RadulaLib._key_name(dest_key, long_key=True),
             )
         else:
-            verify = True
             started = self._start_upload(
                 source_key,
                 dest_bucket,
@@ -1282,6 +1529,15 @@ class RadulaLib(RadulaClient):
                       "{0} did not correctly upload", source)
 
         return dest_key
+
+    def _remote_chunk_size(self, source):
+        remote_mp_info = self.multipart_info(source)
+
+        if RadulaHeaders.get('chunk_size') in remote_mp_info:
+            chunk_size = remote_mp_info.get(RadulaHeaders.get('chunk_size'), 0)
+            msg = "Found chunk_size {size} in source metadata"
+            logger.info(msg.format(size=chunk_size))
+            return int(float(chunk_size))
 
 
 def human_size(size, precision=2):
@@ -1368,6 +1624,44 @@ def do_part_cksum(*args):
     return n, binascii.unhexlify(str(hex_digest))
 
 
+def do_part_verify(source_key, dest_key, part_num,
+                   chunk_start, chunk_size, total_parts):
+    try:
+        range_args = (chunk_start, (chunk_start + chunk_size - 1))
+        range_query = "bytes=%d-%d" % range_args
+        data = {}
+        for which_key, key in [('source', source_key), ('dest', dest_key)]:
+            logger.info("Verify Keys: Starting part %s of %s key" % (
+                part_num + 1, which_key))
+            d1 = time.time()
+            resp = key.bucket.connection.make_request(
+                "GET",
+                bucket=key.bucket.name,
+                key=key.name,
+                headers={
+                    'Range': range_query
+                }
+            )
+            data[which_key] = resp.read()
+            d2 = time.time() - d1
+            fmt = "Verify Keys: Downloaded %s part %s in %0.2fs at %sps"
+            logger.info(fmt % (
+                which_key,
+                part_num + 1,
+                d2,
+                human_size(len(data[which_key]) / d2)
+                )
+            )
+        if data['source'] != data['dest']:
+            fmt = "Verify keys: part %s does not match!"
+            raise RadulaError(fmt % (part_num + 1))
+    except KeyboardInterrupt:
+        return ParallelSim.STOP
+    except Exception as e:
+        logger.exception(e)
+        return ParallelSim.STOP
+
+
 def do_part_upload(*args):
     """
     Upload a part of a MultiPartUpload
@@ -1404,7 +1698,8 @@ def do_part_upload(*args):
             )
             data = resp.read()
             d2 = time.time() - d1
-            logger.info("Streaming Copy: Downloaded part %s in %0.2fs at %sps" % (
+            fmt = "Streaming Copy: Downloaded part %s in %0.2fs at %sps"
+            logger.info(fmt % (
                 part_num + 1, d2, human_size(len(data) / d2)))
         else:
             data = _read_chunk(source_name, start, size)
@@ -1466,7 +1761,7 @@ def do_part_download(*args):
 
         # Make the S3 request
         min_byte = chunk_start
-        max_byte = chunk_start + chunk_size
+        max_byte = chunk_start + chunk_size - 1
 
         resp = conn.make_request(
             "GET",
@@ -1500,6 +1795,70 @@ def do_part_download(*args):
     except Exception as e:
         logger.exception(e)
         raise
+
+
+def do_part_rehash(*args):
+    """
+    Download a part of an S3 object using Range header
+    for purposes for computing a hash; not storage.
+    """
+    try:
+        (conn, key, part_num,
+         chunk_start, chunk_size, num_parts) = args
+
+        # Make the S3 request
+        min_byte = chunk_start
+        max_byte = chunk_start + chunk_size - 1
+
+        resp = conn.make_request(
+            "GET",
+            bucket=key.bucket.name,
+            key=key.name,
+            headers={
+                'Range': "bytes=%d-%d" % (min_byte, max_byte)
+            })
+
+        fmt = "Reading HTTP stream in %dM chunks"
+        logger.debug(fmt % (chunk_size/1024./1024))
+        t1 = time.time()
+        download_size = 0
+        buffer = ""
+        while True:
+            data = resp.read(_mb)
+            if data == "":
+                break
+            buffer += data
+            download_size += len(data)
+
+        buffer = StringIO(buffer)
+        hex_digest, b64_digest = Key.compute_md5(Key(), buffer)
+        buffer.close()
+        part_hash = binascii.unhexlify(str(hex_digest))
+
+        t2 = time.time() - t1
+        print_timings(download_size, t2, "downloading")
+
+        logger.debug("download size: %s", download_size)
+
+        return part_num, part_hash
+    except KeyboardInterrupt:
+        return ParallelSim.STOP
+    except Exception as e:
+        logger.exception(e)
+        raise
+
+
+def do_mp_acl_set(*args):
+    rad, change_type, kwargs = args
+    changes = {
+        RadulaACLChange.ALLOW: rad.allow_user,
+        RadulaACLChange.DISALLOW: rad.disallow_user,
+    }
+
+    method = changes.get(change_type, None)
+    must_have(method, "ACL Change type not recognized")
+
+    return method(**kwargs)
 
 
 def _read_chunk(source_name, start, size):

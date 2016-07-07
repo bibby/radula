@@ -128,7 +128,7 @@ to right.
         -r, --read            During a user grant, permission includes reads
         -w, --write           During a user grant, permission includes writes
         -t THREADS, --threads THREADS
-                              Number of threads to use for uploads. Default=10
+                              Number of threads to use for uploads. Default=3
         -p PROFILE, --profile PROFILE
                               Boto profile. Overrides AWS_PROFILE environment var
         -d DESTINATION, --destination DESTINATION
