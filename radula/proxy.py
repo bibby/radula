@@ -7,9 +7,10 @@ logger = logging.getLogger("radula")
 
 class RadulaProxy(object):
 
-    def __init__(self, profile=None, connection=None):
+    def __init__(self, profile=None, connection=None, connect=True):
         self.lib = RadulaLib()
-        self.lib.connect(profile, connection)
+        if connect:
+            self.lib.connect(profile, connection)
 
     def mb(self, **kwargs):
         """alias of make_bucket"""
@@ -64,6 +65,7 @@ class RadulaProxy(object):
         resume = kwargs.get("resume", False)
         force = kwargs.get("force", False)
         dry_run = kwargs.get("dry_run", False)
+        encrypt = kwargs.get("encrypt", None)
         if not subject:
             raise RadulaError("Missing file(s) to upload")
         if not target:
@@ -75,7 +77,8 @@ class RadulaProxy(object):
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
         self.lib.upload(subject, target, verify=verify,
-                        resume=resume, force=force, dry_run=dry_run)
+                        resume=resume, force=force, dry_run=dry_run,
+                        encrypt=encrypt)
 
     def get(self, **kwargs):
         """alias of download"""
@@ -303,6 +306,7 @@ class RadulaProxy(object):
         force = kwargs.get("force", None)
         verify = kwargs.get("verify", False)
         dry_run = kwargs.get("dry_run", False)
+        encrypt = kwargs.get("encrypt", None)
         if not source:
             raise RadulaError("missing source bucket/key")
         if not dest:
@@ -319,7 +323,8 @@ class RadulaProxy(object):
                                 dest_profile=dest_profile,
                                 force=force,
                                 verify=verify,
-                                dry_run=dry_run)
+                                dry_run=dry_run,
+                                encrypt=encrypt)
 
     def cat(self, **kwargs):
         source = kwargs.get("subject", None)

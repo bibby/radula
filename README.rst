@@ -90,21 +90,21 @@ to right.
 
 ::
 
-    $ radula -h
-    usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-           [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-n] [-z]
-           [{get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,
-           rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,
-           mpc,mp-clean,multipart-clean,rm,remove,keys,info,size,etag,local-md5,remote-md5,verify,
-           sc,streaming-copy,cat}]
-           [subject] [target] ...
-
+    $ usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
+              [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-L LOG_LEVEL]
+              [-n] [-z] [-e]
+              [{acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,
+    put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,size,etag,remote-md5,remote-rehash,verif
+    y,sc,streaming-copy,cat,local-md5,profiles}]
+                  [subject] [target] ...
+    
     RadosGW client
 
     positional arguments:
       {
-        get-acl,set-acl,compare-acl,sync-acl,
-        allow,allow-user,disallow,disallow-user,
+        acls,get-acl,set-acl,compare-acl,sync-acl,
+        allow,allow-user,
+        disallow,disallow-user,
         mb,make-bucket,
         rb,remove-bucket,
         lb,list-buckets,
@@ -114,32 +114,32 @@ to right.
         mpc,mp-clean,multipart-clean,
         rm,remove,
         keys,info,size,etag,
-        local-md5,remote-md5,
-        verify,
-        sc,streaming-copy,cat
+        remote-rehash,verify,remote-md5,local-md5
+        sc,streaming-copy,cat,profiles
       } command
       subject               Subject
       target                Target
       remainder             Additional targets for supporting commands. See README
-
-      optional arguments:
-        -h, --help            show this help message and exit
-        --version             Prints version number
-        -r, --read            During a user grant, permission includes reads
-        -w, --write           During a user grant, permission includes writes
-        -t THREADS, --threads THREADS
-                              Number of threads to use for uploads. Default=3
-        -p PROFILE, --profile PROFILE
-                              Boto profile. Overrides AWS_PROFILE environment var
-        -d DESTINATION, --destination DESTINATION
-                              Destination boto profile, required for streaming copy
-        -f, --force           Overwrite local files without confirmation
-        -y, --verify          Verify uploads after they complete. Uses --threads
-        -c CHUNK_SIZE, --chunk CHUNK_SIZE
-                              multipart upload chunk size in bytes.
-        -l, --long-keys       prepends bucketname to key results.
-        -n, --dry-run         Print would-be deletions without deleting
-        -z, --resume          Resume uploads if needed.
+    
+          optional arguments:
+            -h, --help            show this help message and exit
+            --version             Prints version number
+            -r, --read            During a user grant, permission includes reads
+            -w, --write           During a user grant, permission includes writes
+            -t THREADS, --threads THREADS
+                                  Number of threads to use for uploads. Default=3
+            -p PROFILE, --profile PROFILE
+                                  Boto profile. Overrides AWS_PROFILE environment var
+            -d DESTINATION, --destination DESTINATION
+                                  Destination boto profile, required for streaming copy
+            -f, --force           Overwrite local files without confirmation
+            -y, --verify          Verify uploads after they complete. Uses --threads
+            -c CHUNK_SIZE, --chunk CHUNK_SIZE
+                                  multipart upload chunk size in bytes.
+            -l, --long-keys       prepends bucketname to key results.
+            -n, --dry-run         Print would-be deletions without deleting
+            -z, --resume          Resume uploads if needed.
+            -e, --encrypt         Store content encrypted at rest
 
 
 Examples
@@ -151,6 +151,19 @@ In some of the examples, we'll be manipulating the access to this bucket
 for a second user called ``fred``.
 
 Contained in the bucket are two regular files: ``hello`` and ``world``.
+
+List available profiles
+~~~~~~~~~~~~~~~~~~~~~~~
+
+See `Boto docs <http://boto.cloudhackers.com/en/latest/boto_config_tut.html#credentials>`__ for working with profiles.
+
+::
+
+    [bibby@machine ~]$ radula profiles
+      here
+      there
+    * DEFAULT
+
 
 Displaying bucket ACL
 ~~~~~~~~~~~~~~~~~~~~~
@@ -440,7 +453,7 @@ starting with the letter ``a`` from ``path``, the command would be
 +--------------+-----------------+-----------------------------------------+
 
 For faster multipart uploads, the default number of threads used is
-``10``, but this can be set during upload using the ``-t`` option.
+``3``, but this can be set during upload using the ``-t`` option.
 
 ::
 
@@ -502,6 +515,10 @@ you wish to overwrite it unless the ``-f, --force`` flag is enabled.
 As of ``radula v0.6.6``, downloads are multi-threaded using 10 processes by default,
 which can be controlled with the ``-t, --threads`` flag.
 This is known to have issues writing to glusterfs, so `-t 1` is recommended in that instance.
+
+In ``radula v0.7.1``, default threads was reduced to 3.
+
+As of ``radula v0.7.9``, uploads may include the ``-e,--encrypt`` flag to instruct Rados to store the data encrypted at rest, using its own internal mechanisms. When encrypted data is copied to another cluster, the remote copy should take on this setting without explicitly being told to.
 
 cat
 ~~~

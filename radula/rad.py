@@ -55,6 +55,7 @@ class RadulaClient(object):
     def __init__(self, connection=None):
         self.conn = connection
         self.profile = None
+        self.encrypt_keys = None
         self.thread_count = RadulaClient.DEFAULT_THREADS
         self.chunk_size = Radula.DEFAULT_CHUNK
         self._is_secure_placeholder = None
@@ -108,6 +109,9 @@ class RadulaClient(object):
                         secure = boto.config.getbool('Boto', 'is_secure', None)
                         self._is_secure_placeholder = secure
                         boto.config.remove_option('Boto', 'is_secure')
+                if boto.config.has_option(profile_name, 'encrypt_keys'):
+                    self.encrypt_keys = boto.config.getbool(profile_name, 'encrypt_keys')
+                    logger.info("Encrypt option set in profile: " + str(self.encrypt_keys))
         else:
             """ not using a profile, check if port is set,
             because boto doesnt check"""
@@ -573,6 +577,32 @@ class Radula(RadulaClient):
             return False
         return True
 
+    def profiles(self, **kwargs):
+        cfg = boto.config
+        profile_list = []
+        boto_default_profile = 'Credentials'
+        profile_found = False
+        selected_profile = kwargs.get("profile", None) or boto_default_profile
+
+        for sec in [sec for sec in cfg.sections() if cfg.has_option(sec, 'aws_access_key_id')]:
+            sec = sec.split(" ")[-1]
+            found = sec == selected_profile
+            if found:
+                profile_found = True
+
+            if sec == boto_default_profile:
+                sec = 'DEFAULT'
+            profile_list.append((sec, found))
+
+        for profile, selected in profile_list:
+            used = ' '
+            if selected:
+                used = '*'
+            print " ".join([used, profile])
+
+        if not profile_found:
+            logger.warning("Selected profile (%s) not found!", selected_profile)
+
 
 class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
@@ -611,10 +641,13 @@ class RadulaLib(RadulaClient):
                 yield key
 
     def upload(self, subject, target, verify=False,
-               resume=False, force=False, dry_run=False):
+               resume=False, force=False, dry_run=False, encrypt=None):
         """initiate multipart uploads of
         potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
+        if encrypt is None:
+            encrypt = self.encrypt_keys
+
         try:
             bucket = self.conn.get_bucket(bucket_name)
             files = glob(subject)
@@ -626,20 +659,22 @@ class RadulaLib(RadulaClient):
             if not force:
                 self.assert_missing_target(bucket, key_names)
 
-            if not resume:
-                self.assert_missing_mpu(bucket, key_names)
+                if not resume:
+                    self.assert_missing_mpu(bucket, key_names)
 
             for source_path in files:
                 key_name = guess_target_name(source_path, target_key)
                 if dry_run:
                     dry_run_msg('upload', source_path, "=>", key_name)
                 else:
+                    logger.debug("def upload encrypt=" + str(encrypt))
                     started = self._start_upload(
                         source_path,
                         bucket,
                         key_name,
                         verify=verify,
-                        resume=resume)
+                        resume=resume,
+                        encrypt=encrypt)
                     must_have(started, "{0} did not correctly upload",
                               source_path)
         except S3ResponseError as e:
@@ -647,26 +682,19 @@ class RadulaLib(RadulaClient):
             raise RadulaError(msg.format(bucket_name, target_key, e.message))
 
     def _start_upload(self, source, bucket, key_name, verify=False,
-                      resume=False, copy_from_key=False, dest_conn=None):
+                      resume=False, copy_from_key=False, dest_conn=None,
+                      encrypt=None):
         if copy_from_key:
             source_name = source
             source_size = source.size
-
-            remote_chunk = self._remote_chunk_size(source)
-            if remote_chunk:
-                strategy = RadulaChunkStrategy.DEFAULT
-                self.chunk_size = remote_chunk
-            else:
-                strategy = RadulaChunkStrategy.LEGACY
-                logger.info("Attempting to match the source object's LEGACY chunk strategy")
-
+            num_parts, chunk_size, strategy = self._remote_chunk_size(source)
         else:
             source_name = source
             source = open(source, 'rb')
             source_size = file_size(source)
             strategy = RadulaChunkStrategy.DEFAULT
+            num_parts, chunk_size = self.calculate_chunks(source_size, strategy)
 
-        num_parts, chunk_size = self.calculate_chunks(source_size, strategy)
         logger.info("CHUNKS: %d parts x %s", num_parts, human_size(chunk_size))
 
         generate_hashes = strategy == RadulaChunkStrategy.LEGACY
@@ -686,7 +714,8 @@ class RadulaLib(RadulaClient):
                 copy_from_key=copy_from_key,
                 source_size=source_size,
                 metadata=metadata,
-                generate_hashes=generate_hashes)
+                generate_hashes=generate_hashes,
+                encrypt=encrypt)
 
             hashes = [part_hash]
 
@@ -703,7 +732,8 @@ class RadulaLib(RadulaClient):
                     dest_conn=dest_conn,
                     metadata=metadata,
                     resume=resume,
-                    generate_hashes=generate_hashes)
+                    generate_hashes=generate_hashes,
+                    encrypt=encrypt)
             except:
                 logger.error("Error during upload or cancelling upload",
                              exc_info=True)
@@ -718,23 +748,29 @@ class RadulaLib(RadulaClient):
 
     def _single_part_upload(self, source, key_name, bucket,
                             copy_from_key=False, source_size=0,
-                            metadata=None, generate_hashes=False):
+                            metadata=None, generate_hashes=False,
+                            encrypt=None):
         t1 = time.time()
         part_hash = None
+
+        logger.debug("Encrypt is " + str(encrypt))
 
         if copy_from_key:
             data = source.get_contents_as_string()
             key = bucket.new_key(key_name)
+            if metadata is not None:
+                for k, val in metadata.items():
+                    key.set_metadata(k, val)
             fake_fp = StringIO(data)
             part_hash, b64_digest = Key.compute_md5(Key(), fake_fp)
-            key.set_contents_from_string(data)
+            key.set_contents_from_string(data, encrypt_key=encrypt)
         else:
             source.seek(0)
             key = bucket.new_key(key_name)
             if metadata is not None:
                 for k, val in metadata.items():
                     key.set_metadata(k, val)
-            key.set_contents_from_file(source)
+            key.set_contents_from_file(source, encrypt_key=encrypt)
 
         t2 = time.time() - t1
 
@@ -748,7 +784,8 @@ class RadulaLib(RadulaClient):
                            copy_from_key=False, source_size=0, num_parts=0,
                            chunk_size=0, dest_conn=None,
                            metadata=None, resume=False,
-                           generate_hashes=False):
+                           generate_hashes=False,
+                           encrypt=None):
         """multipart upload strategy.
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
@@ -756,7 +793,7 @@ class RadulaLib(RadulaClient):
         dest_conn = dest_conn or self.conn
 
         mpu_init = self._init_mpu(bucket, key_name, dest_conn,
-                                  metadata, resume)
+                                  metadata, resume, encrypt)
 
         (mpu, existing_parts) = mpu_init
 
@@ -811,7 +848,8 @@ class RadulaLib(RadulaClient):
             hashes = sorted(pool.get_results(), key=lambda d: d[0])
         return key, hashes
 
-    def _init_mpu(self, bucket, key_name, dest_conn, metadata, resume=False):
+    def _init_mpu(self, bucket, key_name, dest_conn, metadata, resume=False,
+                  encrypt=None):
         key_path = os.path.join(bucket.name, key_name)
 
         existing_parts = {}
@@ -828,7 +866,11 @@ class RadulaLib(RadulaClient):
 
         if not mpu:
             logger.info("Initializing Multipart upload")
-            mpu = bucket.initiate_multipart_upload(key_name, metadata=metadata)
+            mpu = bucket.initiate_multipart_upload(
+                key_name,
+                metadata=metadata,
+                encrypt_key=encrypt
+            )
 
         return mpu, existing_parts
 
@@ -836,13 +878,13 @@ class RadulaLib(RadulaClient):
         for part_num in range(total_parts):
             chunk_start = chunk_size * part_num
             process_args = (
-                    source,
-                    dest,
-                    part_num,
-                    chunk_start,
-                    chunk_size,
-                    total_parts
-                )
+                source,
+                dest,
+                part_num,
+                chunk_start,
+                chunk_size,
+                total_parts
+            )
             yield process_args
 
     def _mp_upload_args(self, source, bucket, mpu, chunk_size, total_parts,
@@ -1028,6 +1070,23 @@ class RadulaLib(RadulaClient):
             not_completed_msg = "Multipart download tasks completed, " \
                                 "but completed was False??."
             must_have(completed, not_completed_msg)
+
+            try:
+                mod_time = datetime.strptime(
+                    key.last_modified,
+                    '%a, %d %b %Y %H:%M:%S %Z'
+                )
+
+                mod_time = to_timestamp(mod_time)
+                os.utime(target, (mod_time, mod_time))
+
+            except ValueError as e:
+                logger.exception(e)
+                logger.warn(" ".join([
+                    "datetime ValueError encountered,",
+                    "but not a critical error."
+                ]))
+
         except KeyboardInterrupt:
             logger.warn("Received KeyboardInterrupt, cancelling download")
             cancel_download()
@@ -1237,15 +1296,7 @@ class RadulaLib(RadulaClient):
         must_have(subject_type == Radula.KEY, "Key not found: {0}", key_name)
         must_have(key, "Key not found: {0}", key_name)
 
-        remote_chunk = self._remote_chunk_size(key)
-        if remote_chunk:
-            strategy = RadulaChunkStrategy.DEFAULT
-            self.chunk_size = remote_chunk
-        else:
-            strategy = RadulaChunkStrategy.LEGACY
-            logger.info("Attempting to match the source object's LEGACY chunk strategy")
-
-        num_parts, chunk_size = self.calculate_chunks(key.size, strategy=strategy)
+        num_parts, chunk_size, strategy = self._remote_chunk_size(key)
 
         logger.debug({
             "size": key.size,
@@ -1436,7 +1487,14 @@ class RadulaLib(RadulaClient):
                     hex_digest = hash_obj.hexdigest()
                     local_md5 = '{0}-{1}'.format(hex_digest, len(hashes))
         else:
-            chunk_size = self._remote_chunk_size(target)
+            (bucket_name, key_name, key,
+             subject_type) = self.hone_target(target)
+
+            if subject_type != Radula.KEY:
+                msg = 'Remote target is not a key! ({0})'
+                raise RadulaError(msg.format(subject))
+
+            num_parts, chunk_size, strategy = self._remote_chunk_size(key)
             logger.info("remote object reports chunk size: %s", chunk_size)
             local_md5 = self.local_md5(subject, int(chunk_size))
 
@@ -1486,8 +1544,11 @@ class RadulaLib(RadulaClient):
         return True
 
     def streaming_copy(self, source, destination, dest_profile=None,
-                       force=False, verify=False, resume=False, dry_run=False):
+                       force=False, verify=False, resume=False, dry_run=False,
+                       encrypt=None):
         """initiate streaming copy between two keys"""
+        if encrypt is None:
+            encrypt = self.encrypt_keys
         source_bucket_name, source_key_name = Radula.split_bucket(source)
         source_bucket = self.conn.get_bucket(source_bucket_name)
         source_key = source_bucket.get_key(source_key_name)
@@ -1505,7 +1566,7 @@ class RadulaLib(RadulaClient):
         dest_bucket_name, dest_key_name = Radula.split_bucket(destination)
         dest_key_name = guess_target_name(source, dest_key_name)
 
-        dest_bucket = dest_conn.get_bucket(dest_bucket_name)
+        dest_bucket = dest_conn.get_bucket(dest_bucket_name, validate=False)
         dest_key = dest_bucket.get_key(dest_key_name)
         if dest_key is not None and not force:
             raise RadulaError("dest key exists (use -f to overwrite)")
@@ -1523,7 +1584,8 @@ class RadulaLib(RadulaClient):
                 verify=verify,
                 resume=resume,
                 copy_from_key=True,
-                dest_conn=dest_conn)
+                dest_conn=dest_conn,
+                encrypt=encrypt)
 
             must_have(started,
                       "{0} did not correctly upload", source)
@@ -1534,10 +1596,24 @@ class RadulaLib(RadulaClient):
         remote_mp_info = self.multipart_info(source)
 
         if RadulaHeaders.get('chunk_size') in remote_mp_info:
-            chunk_size = remote_mp_info.get(RadulaHeaders.get('chunk_size'), 0)
+            # if the chunk size is in the metadata, we're going to use it
+            chunk_size_parts = remote_mp_info.get(RadulaHeaders.get('chunk_size'), 0).split('.')
+            if len(chunk_size_parts) > 1 and int(chunk_size_parts[1]) > 0:
+                raise ValueError("chunk size is a float with a non-zero remainder")
+
+            chunk_size = int(chunk_size_parts[0])
+
             msg = "Found chunk_size {size} in source metadata"
             logger.info(msg.format(size=chunk_size))
-            return int(float(chunk_size))
+            # NOTE no "self" here
+            num_parts, chunk_size = calculate_chunks(source.size, chunk_size)
+            return num_parts, chunk_size, RadulaChunkStrategy.DEFAULT
+        else:
+            # chunk size isnt in metadata, so use LEGACY strategy to look it up
+            strategy = RadulaChunkStrategy.LEGACY
+            logger.info("Attempting to match the source object's LEGACY chunk strategy")
+            num_parts, chunk_size = self.calculate_chunks(source.size, strategy=strategy)
+            return num_parts, chunk_size, strategy
 
 
 def human_size(size, precision=2):
@@ -1922,7 +1998,7 @@ def calculate_num_chunks(source_size, chunk_size):
 
 def calculate_chunks(source_size, chunk_size=Radula.DEFAULT_CHUNK):
     """generate a chunk count and size for a large file."""
-    if source_size < chunk_size:
+    if int(source_size) < int(chunk_size):
         return 1, source_size
 
     chunk_count = int(ceil(source_size / float(chunk_size)))
@@ -2003,3 +2079,8 @@ def dry_run_msg(func, *args):
     fmt = 'DRY RUN: {0}-> {1}'
     print fmt.format(func, ", ".join(args))
     return None
+
+
+def to_timestamp(dt):
+    epoch = datetime(1970, 1, 1).replace(tzinfo=None)
+    return int((dt - epoch).total_seconds())

@@ -15,11 +15,7 @@ cmd_acl = [
     'get-acl',
     'set-acl',
     'compare-acl',
-    'sync-acl'
-]
-
-# User grant commands
-cmd_usr = [
+    'sync-acl',
     'allow', 'allow-user',
     'disallow', 'disallow-user'
 ]
@@ -35,8 +31,14 @@ cmd_proxy = [
     'mpc', 'mp-clean', 'multipart-clean',
     'rm', 'remove',
     'keys', 'info', 'size', 'etag',
-    'local-md5', 'remote-md5', 'remote-rehash', 'verify',
+    'remote-md5', 'remote-rehash', 'verify',
     'sc', 'streaming-copy', 'cat'
+]
+
+# commands to perform without a s3 connection
+cmd_preconnect = [
+    'local-md5',
+    'profiles',
 ]
 
 
@@ -69,13 +71,12 @@ def _real_main():
         getattr(radu, command)(**vars(args))
         exit()
 
-    if args.command in cmd_usr:
-        radu.connect(profile=args.profile)
-        getattr(radu, command)(**vars(args))
-        exit()
-
     if args.command in cmd_proxy:
         radu = RadulaProxy(profile=args.profile)
+        getattr(radu, command)(**vars(args))
+        pass
+
+    if args.command in cmd_preconnect:
         getattr(radu, command)(**vars(args))
         pass
 
@@ -90,7 +91,7 @@ def check_negative(value):
 
 def _parse_args(arg_string=None):
     args = argparse.ArgumentParser(description='RadosGW client')
-    commands = cmd_acl + cmd_usr + cmd_proxy
+    commands = cmd_acl + cmd_proxy + cmd_preconnect
 
     args.add_argument(
         '--version',
@@ -180,6 +181,14 @@ def _parse_args(arg_string=None):
         dest='resume',
         action='store_true',
         help='Resume uploads if needed.'
+    )
+
+    args.add_argument(
+        '-e', '--encrypt',
+        dest='encrypt',
+        action='store_true',
+        default=None,
+        help='Store content encrypted at rest'
     )
 
     args.add_argument(
