@@ -52,10 +52,10 @@ Configure
 ---------
 
 radula uses *boto*, so all configuration is really `boto
-configuration <http://boto.readthedocs.org/en/latest/s3_tut.html>`__.
-Notable changes are replacing the url to amazon aws with that of one of
-your gateways. Where applicable, you may have to disable SSL as a
-default option.
+configuration <http://boto.readthedocs.org/en/latest/s3_tut.html>`__, 
+with some extensions to support streaming copy operations, see the Streaming Copy section below for those custom items. 
+Notable changes are replacing the url to amazon aws with that of one of your gateways.
+Where applicable, you may have to disable SSL as a default option.
 
 ::
 
@@ -684,7 +684,7 @@ use the default boto credentials for the destination.
 Copy a file from first-ceph to second-ceph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``radula sc -d second mybucket/file other_bucket/file``
+``radula -d second sc mybucket/file other_bucket/file``
 
 The above command used the default boto profile to send ``file`` from
 ``mybucket`` located on the default ceph to the ceph defined in the
@@ -693,7 +693,7 @@ profile named ``second``.
 Copy a file from second-ceph to first-ceph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``radula -p second -d Default other_bucket/file mybucket/file``
+``radula -p second -d Default sc other_bucket/file mybucket/file``
 
 This is the inverse of the previous example. Using the ``second``
 profile as the source/subject (as specified by ``-p second``), we're
@@ -706,4 +706,4 @@ Copy profile to profile
 Avoiding the use of default profiles all together, you can copy using
 both ``-p`` and ``-d`` flags.
 
-``radula -p here -d there here/stuff there/stuff``
+``radula -p here -d there sc here/stuff there/stuff``

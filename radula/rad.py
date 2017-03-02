@@ -115,12 +115,25 @@ class RadulaClient(object):
         else:
             """ not using a profile, check if port is set,
             because boto doesnt check"""
-            port = boto.config.get('s3', 'port', None)
+            port = None
+            if boto.config.has_section('s3'):
+                port = boto.config.get('s3', 'port', None)
             if port:
                 args['port'] = int(port)
 
+        if boto.config.has_section('s3'):
+            calling_format = boto.config.get('s3', 'calling_format', None)
+            if calling_format:
+                klass = calling_format.split('.')[-1]
+                kmod = ".".join(calling_format.split('.')[:-1])
+                mod = __import__(kmod, fromlist=[klass])
+                calling_format = getattr(mod, klass)
+            else:
+                calling_format = boto.s3.connection.OrdinaryCallingFormat
+
+        logger.debug("Calling format: %s", calling_format)
         conn = boto.connect_s3(
-            calling_format=boto.s3.connection.OrdinaryCallingFormat(),
+            calling_format=calling_format(),
             **args
         )
 
@@ -829,8 +842,8 @@ class RadulaLib(RadulaClient):
             must_have(completed, not_completed_msg)
 
             mpu.complete_upload()
-        except KeyboardInterrupt:
-            logger.warn("Received KeyboardInterrupt, cancelling upload")
+        except (KeyboardInterrupt, SystemExit):
+            logger.warn("Received Built-in Exception, cancelling upload")
             cancel_upload()
             raise
         except Exception:
@@ -1087,8 +1100,8 @@ class RadulaLib(RadulaClient):
                     "but not a critical error."
                 ]))
 
-        except KeyboardInterrupt:
-            logger.warn("Received KeyboardInterrupt, cancelling download")
+        except (KeyboardInterrupt, SystemExit):
+            logger.warn("Received Built-in Exception, cancelling download")
             cancel_download()
             raise
         except Exception:
@@ -1141,8 +1154,8 @@ class RadulaLib(RadulaClient):
             not_completed_msg = "Multipart download tasks completed, " \
                                 "but completed was False??."
             must_have(completed, not_completed_msg)
-        except KeyboardInterrupt:
-            logger.warn("Received KeyboardInterrupt, cancelling download")
+        except (KeyboardInterrupt, SystemExit):
+            logger.warn("Received Built-in Exception, cancelling download")
             cancel_download()
             raise
         except Exception:
@@ -1185,14 +1198,30 @@ class RadulaLib(RadulaClient):
         for sub in subject:
             bucket_name, pattern = Radula.split_bucket(sub)
             bucket = self.conn.get_bucket(bucket_name)
+
+            # user requested `keys {bucket}`
             if not pattern:
+                logger.debug("?keys strat: %s", "bucket/")
                 for key in bucket:
                     yield RadulaLib._key_name(key.name, bucket_name, long_key)
                 return
 
-            for matching_keys in RadulaLib.__key_buffer(bucket, pattern):
-                for key in matching_keys:
-                    yield RadulaLib._key_name(key, bucket_name, long_key)
+            # user requested `keys {bucket}/prefix*`
+            if is_glob(pattern):
+                logger.debug("?keys strat: %s", "bucket/glob")
+                for matching_keys in RadulaLib.__key_buffer(bucket, pattern):
+                    for key in matching_keys:
+                        yield RadulaLib._key_name(key, bucket_name, long_key)
+                return
+            else:
+                logger.debug("?keys strat: %s",  "bucket/key")
+                # user requested `keys {bucket}/{key}`
+                logger.debug("?bucket: %s", bucket)
+                logger.debug("?key: %s", pattern)
+                key = bucket.get_key(pattern)
+                if not key:
+                    raise RadulaError("key does not exist: %s" % (pattern,))
+                yield RadulaLib._key_name(key, bucket_name, long_key)
 
     @staticmethod
     def __key_buffer(bucket, pattern, buffer_size=256):
@@ -1449,8 +1478,8 @@ class RadulaLib(RadulaClient):
                     pool.add(do_part_verify, args)
                 pool.run()
                 must_have(pool.completed(), "Some parts failed to call back")
-            except KeyboardInterrupt:
-                logger.warn("Received KeyboardInterrupt, cancelling upload")
+            except (KeyboardInterrupt, SystemExit):
+                logger.warn("Received Built-in Exception, cancelling upload")
                 cancel_upload()
                 raise
             except Exception:
@@ -1731,7 +1760,7 @@ def do_part_verify(source_key, dest_key, part_num,
         if data['source'] != data['dest']:
             fmt = "Verify keys: part %s does not match!"
             raise RadulaError(fmt % (part_num + 1))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         return ParallelSim.STOP
     except Exception as e:
         logger.exception(e)
@@ -1813,7 +1842,7 @@ def do_part_upload(*args):
         logger.info("Uploaded part %s of %s (%s) in %0.2fs at %sps" % (
             part_num + 1, num_parts, human_size(s), t2, human_size(s / t2)))
         del data, mpu
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         return ParallelSim.STOP
     except Exception as e:
         logger.exception(e)
@@ -1866,7 +1895,7 @@ def do_part_download(*args):
         t2 = time.time() - t1
         os.close(fd)
         print_timings(download_size, t2, "downloading")
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         return ParallelSim.STOP
     except Exception as e:
         logger.exception(e)
@@ -1917,7 +1946,7 @@ def do_part_rehash(*args):
         logger.debug("download size: %s", download_size)
 
         return part_num, part_hash
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         return ParallelSim.STOP
     except Exception as e:
         logger.exception(e)
@@ -2084,3 +2113,14 @@ def dry_run_msg(func, *args):
 def to_timestamp(dt):
     epoch = datetime(1970, 1, 1).replace(tzinfo=None)
     return int((dt - epoch).total_seconds())
+
+
+def is_glob(subject):
+    """matches:
+    - foo*
+    - fo?
+    - fo[oi]
+    Does NOT match bash curly: foo.{txt,md5}
+    """
+    pattern = re.compile('[\*\?\[\]]')
+    return bool(pattern.search(subject))

@@ -52,12 +52,16 @@ def _real_main():
     config_check()
     radu = Radula()
 
-    log_level = logging.INFO
-    if args.log_level:
-        if not isinstance(args.log_level, int):
-            level = getattr(logging, args.log_level)
-            if isinstance(log_level, int):
-                log_level = level
+    default_log_level = logging.INFO
+    if args.verbose:
+        log_level = logging.DEBUG
+    else:
+        log_level = default_log_level
+        if args.log_level:
+            if not isinstance(args.log_level, int):
+                level = getattr(logging, args.log_level)
+                if isinstance(log_level, int):
+                    log_level = level
 
     logging.basicConfig(
         level=log_level,
@@ -167,6 +171,13 @@ def _parse_args(arg_string=None):
         dest='log_level',
         default=logging.INFO,
         help='Log level, [DEBUG, 10, INFO, 20, etc]'
+    )
+
+    args.add_argument(
+        '-v', '--verbose',
+        dest='verbose',
+        action='store_true',
+        help='Verbose. Equiv to -L DEBUG'
     )
 
     args.add_argument(
