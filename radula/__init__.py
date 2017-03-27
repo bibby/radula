@@ -68,6 +68,7 @@ def _real_main():
         format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
     )
     logger = logging.getLogger("radula")
+    logger.debug("Radula Version: %s", __version__)
     logger.debug("Log Level: %d", log_level)
 
     if args.command in cmd_acl:
@@ -200,6 +201,13 @@ def _parse_args(arg_string=None):
         action='store_true',
         default=None,
         help='Store content encrypted at rest'
+    )
+
+    args.add_argument(
+        '-A', '--all-buckets',
+        dest='all_buckets',
+        action='store_true',
+        help='act upon all buckets (info only)'
     )
 
     args.add_argument(

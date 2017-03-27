@@ -121,15 +121,15 @@ class RadulaClient(object):
             if port:
                 args['port'] = int(port)
 
+        calling_format = boto.s3.connection.OrdinaryCallingFormat
         if boto.config.has_section('s3'):
-            calling_format = boto.config.get('s3', 'calling_format', None)
-            if calling_format:
-                klass = calling_format.split('.')[-1]
-                kmod = ".".join(calling_format.split('.')[:-1])
+            call_fmt = boto.config.get('s3', 'calling_format', None)
+            if call_fmt:
+                klass = call_fmt.split('.')[-1]
+                kmod = ".".join(call_fmt.split('.')[:-1])
                 mod = __import__(kmod, fromlist=[klass])
                 calling_format = getattr(mod, klass)
-            else:
-                calling_format = boto.s3.connection.OrdinaryCallingFormat
+
 
         logger.debug("Calling format: %s", calling_format)
         conn = boto.connect_s3(
@@ -597,21 +597,32 @@ class Radula(RadulaClient):
         profile_found = False
         selected_profile = kwargs.get("profile", None) or boto_default_profile
 
-        for sec in [sec for sec in cfg.sections() if cfg.has_option(sec, 'aws_access_key_id')]:
-            sec = sec.split(" ")[-1]
-            found = sec == selected_profile
+        boto_default_host = cfg.get("s3", "host", None)
+        boto_default_port = cfg.getint("s3", "port", 0)
+
+        for section_name in [sec for sec in cfg.sections() if cfg.has_option(sec, 'aws_access_key_id')]:
+            profile_name = section_name.split(" ")[-1]
+            found = profile_name == selected_profile
             if found:
                 profile_found = True
 
-            if sec == boto_default_profile:
-                sec = 'DEFAULT'
-            profile_list.append((sec, found))
+            if profile_name == boto_default_profile:
+                profile_name = 'DEFAULT'
 
-        for profile, selected in profile_list:
+            host = cfg.get(section_name, "host", boto_default_host)
+            port = cfg.getint(section_name, "port", boto_default_port)
+            profile_list.append((profile_name, found, host, port))
+
+        profile_fmt = "{0}{1}\t{2}{3}"
+        for profile, selected, host, port in profile_list:
             used = ' '
             if selected:
                 used = '*'
-            print " ".join([used, profile])
+            if port > 0:
+                port = ":" + str(port)
+            else:
+                port = ''
+            print profile_fmt.format(used, profile.ljust(16), host, port)
 
         if not profile_found:
             logger.warning("Selected profile (%s) not found!", selected_profile)
@@ -625,7 +636,7 @@ class RadulaLib(RadulaClient):
         """proxy make_bucket in boto"""
         for existing_bucket in self.conn.get_all_buckets():
             if bucket == existing_bucket.name:
-                print "Bucket {0} already exists.".format(bucket)
+                stderr_msg("Bucket {0} already exists.".format(bucket))
                 return False
 
         if dry_run:
@@ -672,8 +683,8 @@ class RadulaLib(RadulaClient):
             if not force:
                 self.assert_missing_target(bucket, key_names)
 
-                if not resume:
-                    self.assert_missing_mpu(bucket, key_names)
+            if not resume:
+                self.assert_missing_mpu(bucket, key_names, force)
 
             for source_path in files:
                 key_name = guess_target_name(source_path, target_key)
@@ -957,13 +968,18 @@ class RadulaLib(RadulaClient):
                 msg = "Key {0}/{1} already exists. Use -f,--force to overwrite"
                 raise RadulaError(msg.format(bucket.name, key_name))
 
-    def assert_missing_mpu(self, bucket, key_names):
+    def assert_missing_mpu(self, bucket, key_names, force=None):
+        """when force is True and a mpu exists, clear it"""
         for key_name in key_names:
             mpu = self.find_multipart_upload("/".join([bucket.name, key_name]))
             if mpu:
-                msg = "Multipart Upload for {0}/{1} in progress. " \
-                      "Use -z,--resume if needed"
-                raise RadulaError(msg.format(bucket.name, key_name))
+                if force:
+                    logger.info("Cancelling incomplete upload: " + str(mpu.id))
+                    bucket.cancel_multipart_upload(mpu.key_name, mpu.id)
+                else:
+                    msg = "Multipart Upload for {0}/{1} in progress. " \
+                          "Use -z,--resume if needed"
+                    raise RadulaError(msg.format(bucket.name, key_name))
 
     @staticmethod
     def sync_acl(key, bucket):
@@ -1039,7 +1055,7 @@ class RadulaLib(RadulaClient):
             percentage = 0
             if a:
                 percentage = 100 * (float(a) / float(b))
-            print "Download Progress: %.2f%%" % percentage
+            logger.info("Download Progress: %.2f%%" % percentage)
 
         t1 = time.time()
         key.get_contents_to_filename(target, cb=progress_callback,
@@ -1120,7 +1136,7 @@ class RadulaLib(RadulaClient):
             percentage = 0
             if a:
                 percentage = 100 * (float(a) / float(b))
-            print "Download Progress: %.2f%%" % percentage
+            logger.info("Download Progress: %.2f%%" % percentage)
 
         t1 = time.time()
         hash_obj = md5()
@@ -1205,6 +1221,14 @@ class RadulaLib(RadulaClient):
                 for key in bucket:
                     yield RadulaLib._key_name(key.name, bucket_name, long_key)
                 return
+
+            # treat  path/to/ as path/to/*
+            if pattern[-1] == '/':
+                pattern = pattern + '*'
+
+            logger.info("bucket_name: %s", bucket_name)
+            logger.info("pattern: %s", pattern)
+            logger.info("is_glob: %s", is_glob(pattern))
 
             # user requested `keys {bucket}/prefix*`
             if is_glob(pattern):
@@ -1352,7 +1376,7 @@ class RadulaLib(RadulaClient):
             msg = "RemoteMetaData: {0} ; ComputedHash: {1}"
             logger.error(msg.format(expected, hex_digest))
             fmt = "DIFFERENT CKSUMS!\nRemoteMetaData {0}\nComputedHash {1}"
-            print >> sys.stderr, fmt.format(expected, hex_digest)
+            stderr_msg(fmt.format(expected, hex_digest))
             return False
 
     def multipart_info(self, subject):
@@ -1535,7 +1559,7 @@ class RadulaLib(RadulaClient):
             msg = "LocalMD5: {0} ; RemoteMD5: {1}"
             logger.error(msg.format(local_md5, remote_md5))
             fmt = "DIFFERENT CKSUMS!\nLocal {0}\nRemote {1}"
-            print >> sys.stderr, fmt.format(local_md5, remote_md5)
+            stderr_msg(fmt.format(local_md5, remote_md5))
             return False
 
     def multipart_list(self, subject, conn=None):
@@ -2067,10 +2091,10 @@ def guess_target_name(source_path, target_key):
 
 
 def print_warning(message):
-    print '!' * 48
-    print '! WARNING'
-    print '! ' + message
-    print '!' * 48
+    stderr_msg('!' * 48)
+    stderr_msg('! WARNING')
+    stderr_msg('! ' + message)
+    stderr_msg('!' * 48)
 
 
 def get_mpu_by_id(bucket, mpu_id):
@@ -2124,3 +2148,7 @@ def is_glob(subject):
     """
     pattern = re.compile('[\*\?\[\]]')
     return bool(pattern.search(subject))
+
+
+def stderr_msg(msg):
+    print >> sys.stderr, msg

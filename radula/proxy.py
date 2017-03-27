@@ -139,7 +139,18 @@ class RadulaProxy(object):
             print key
 
     def info(self, **kwargs):
-        print json.dumps(self.__info(**kwargs)).replace('\\"', '')
+        all_buckets = kwargs.get("all_buckets", None)
+        if all_buckets:
+            info_json = []
+            buckets = sorted([bucket.name for bucket in self.lib.get_buckets()])
+            for bucket in buckets:
+                kwargs_copy = kwargs.copy()
+                kwargs_copy["subject"] = bucket
+                info_json.append(self.__info(**kwargs_copy)[0])
+        else:
+            info_json = self.__info(**kwargs)
+
+        print json.dumps(info_json).replace('\\"', '')
 
     def __info(self, **kwargs):
         """prints metadata for a remote subject key"""
