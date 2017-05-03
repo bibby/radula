@@ -506,8 +506,10 @@ class Radula(RadulaClient):
         permissions = []
         if kwargs.get("acl_read", None):
             permissions.append("READ")
+            permissions.append("READ_ACP")
         if kwargs.get("acl_write", None):
             permissions.append("WRITE")
+            permissions.append("WRITE_ACP")
         if not len(permissions):
             permissions = ['READ', 'WRITE', 'READ_ACP',
                            'WRITE_ACP', 'FULL_CONTROL']
