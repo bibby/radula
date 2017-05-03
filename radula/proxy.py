@@ -128,6 +128,14 @@ class RadulaProxy(object):
             for key in self.lib.remove_key(subject, dry_run=dry_run):
                 print key
 
+    def ls(self, **kwargs):
+        """alias of keys"""
+        return self.keys(**kwargs)
+
+    def list(self, **kwargs):
+        """alias of keys"""
+        return self.keys(**kwargs)
+
     def keys(self, **kwargs):
         """lists keys of a subject bucket"""
         subject = kwargs.get("subject", None)

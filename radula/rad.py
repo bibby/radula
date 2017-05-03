@@ -1194,7 +1194,7 @@ class RadulaLib(RadulaClient):
             return hex_digest
         return '{0}-{1}'.format(hex_digest, num_parts)
 
-    def cat(self, subject, chunk_size=None):
+    def _cat(self, subject, chunk_size=None):
         """print remote file to stdout"""
         bucket_name, key_name = Radula.split_key(subject)
         boto_key = self.conn.get_bucket(bucket_name).get_key(key_name)
@@ -1206,7 +1206,11 @@ class RadulaLib(RadulaClient):
                 'Range': "bytes=%s" % (chunk_size)
             }
 
-        sys.stdout.write(boto_key.get_contents_as_string(headers=headers))
+        return boto_key.get_contents_as_string(headers=headers)
+
+    def cat(self, subject, chunk_size=None):
+        sys.stdout.write(self._cat(subject, chunk_size))
+
 
     def keys(self, subject, long_key=False):
         """list keys in a bucket with consideration
