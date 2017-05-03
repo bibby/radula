@@ -216,6 +216,10 @@ def test_download_file():
 
 @mock_s3
 def dl_method(method, test_set):
+    handler = TestHandler(Matcher())
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+
     radu = RadulaProxy(connection=boto.connect_s3())
     radu.make_bucket(subject=TEST_BUCKET)
 
@@ -279,6 +283,92 @@ def key_test():
         expected_key = os.path.basename(expected_key)
         msg = "Expecting output containing '{0}'".format(expected_key)
         assert_in(expected_key, keys, msg=msg)
+
+
+@mock_s3
+def key_glob_test():
+    radu = RadulaProxy(connection=boto.connect_s3())
+    radu.make_bucket(subject=TEST_BUCKET)
+
+    # give something to download
+    args = vars(_parse_args(['up']))
+    expected = []
+    keys_added = 3
+    # some to find
+    for i in xrange(keys_added):
+        remote_file = REMOTE_FILE + str(i)
+        expected.append(remote_file)
+        args.update({
+            "subject": TEST_FILE,
+            "target": remote_file
+        })
+        radu.upload(**args)
+
+    # some to miss
+    for i in xrange(keys_added):
+        remote_file = os.path.join(TEST_BUCKET, "miss-" + str(i) + os.path.basename(TEST_FILE))
+        args.update({
+            "subject": TEST_FILE,
+            "target": remote_file
+        })
+        radu.upload(**args)
+
+    sys.stdout.truncate(0)
+
+    radu.keys(subject=os.path.join(TEST_BUCKET, 'data*'))
+    keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
+    for expected_key in expected:
+        expected_key = os.path.basename(expected_key)
+        msg = "Expecting output containing '{0}'".format(expected_key)
+        assert_in(expected_key, keys, msg=msg)
+    assert_equal(
+        keys_added,
+        len(keys),
+        "Expected to have %d keys, got %d" % (keys_added, len(keys))
+    )
+
+@mock_s3
+def key_slash_test():
+    radu = RadulaProxy(connection=boto.connect_s3())
+    radu.make_bucket(subject=TEST_BUCKET)
+
+    # give something to download
+    args = vars(_parse_args(['up']))
+    expected = []
+    keys_added = 3
+    # some to find
+    for i in xrange(keys_added):
+        remote_file = os.path.join(TEST_BUCKET, "find", os.path.basename(TEST_FILE)) + str(i)
+        expected.append(remote_file)
+        args.update({
+            "subject": TEST_FILE,
+            "target": remote_file
+        })
+        radu.upload(**args)
+
+    # some to miss
+    for i in xrange(keys_added):
+        remote_file = os.path.join(TEST_BUCKET, "miss", os.path.basename(TEST_FILE)) + str(i)
+        args.update({
+            "subject": TEST_FILE,
+            "target": remote_file
+        })
+        radu.upload(**args)
+
+    sys.stdout.truncate(0)
+
+    # bucket/find/ (trailing slash)
+    radu.keys(subject=os.path.join(TEST_BUCKET, 'find', ''))
+    keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
+    for expected_key in expected:
+        expected_key = os.path.join('find', os.path.basename(expected_key))
+        msg = "Expecting output containing '{0}'".format(expected_key)
+        assert_in(expected_key, keys, msg=msg)
+    assert_equal(
+        keys_added,
+        len(keys),
+        "Expected to have %d keys, got %d" % (keys_added, len(keys))
+    )
 
 
 def rm_test():
