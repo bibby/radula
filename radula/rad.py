@@ -666,8 +666,8 @@ class RadulaLib(RadulaClient):
                 bucket.delete_key(key)
                 yield key
 
-    def upload(self, subject, target, verify=False,
-               resume=False, force=False, dry_run=False, encrypt=None):
+    def upload(self, subject, target, verify=False, resume=False,
+               force=False, dry_run=False, encrypt=None, ignore_existing=False):
         """initiate multipart uploads of
         potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
@@ -677,19 +677,33 @@ class RadulaLib(RadulaClient):
         try:
             bucket = self.conn.get_bucket(bucket_name)
             files = glob(subject)
+            file_keys = []
             if len(files) == 0:
                 msg = "No file(s) to upload: used {0}"
                 raise RadulaError(msg.format(subject))
 
-            key_names = [guess_target_name(f, target_key) for f in files]
+            for f in files:
+                if os.path.isfile(f):
+                    file_keys.append((f, guess_target_name(f, target_key)))
+                if os.path.isdir(f):
+                    logger.info("is dir: %s", f)
+                    for wroot, wdirs, wfiles in os.walk(f):
+                        for wf in wfiles:
+                            src_file = os.path.join(wroot, wf)
+                            tgt_file = os.path.join(target_key or '', guess_target_name(wf, src_file))
+                            file_keys.append(
+                                (src_file, tgt_file,)
+                            )
+
+            logger.debug(file_keys)
+
             if not force:
-                self.assert_missing_target(bucket, key_names)
+                file_keys = self.assert_missing_target(bucket, file_keys, ignore_existing)
 
             if not resume:
-                self.assert_missing_mpu(bucket, key_names, force)
+                self.assert_missing_mpu(bucket, file_keys, force)
 
-            for source_path in files:
-                key_name = guess_target_name(source_path, target_key)
+            for source_path, key_name in file_keys:
                 if dry_run:
                     dry_run_msg('upload', source_path, "=>", key_name)
                 else:
@@ -963,16 +977,25 @@ class RadulaLib(RadulaClient):
                             chunk_start, chunk_size, num_parts)
             yield process_args
 
-    def assert_missing_target(self, bucket, key_names):
-        for key_name in key_names:
+    def assert_missing_target(self, bucket, key_names, ignore_existing=False):
+        return_keys = []
+        for fname, key_name in key_names:
             key = bucket.get_key(key_name)
             if key:
-                msg = "Key {0}/{1} already exists. Use -f,--force to overwrite"
-                raise RadulaError(msg.format(bucket.name, key_name))
+                if ignore_existing:
+                    msg = "Skipping Key (exists and -i): {0}/{1}"
+                    logger.info(msg.format(bucket.name, key_name))
+                    continue
+                else:
+                    msg = "Key {0}/{1} already exists. Use -f,--force to overwrite or -i,--ignore-existing to skip"
+                    raise RadulaError(msg.format(bucket.name, key_name))
+            return_keys.append((fname, key_name))
+        return return_keys
+
 
     def assert_missing_mpu(self, bucket, key_names, force=None):
         """when force is True and a mpu exists, clear it"""
-        for key_name in key_names:
+        for (fname, key_name) in key_names:
             mpu = self.find_multipart_upload("/".join([bucket.name, key_name]))
             if mpu:
                 if force:
@@ -1004,53 +1027,71 @@ class RadulaLib(RadulaClient):
                     key_policy.acl.add_user_grant(permission, bucket_owner)
                     key.set_acl(key_policy)
 
-    def download(self, subject, target, verify=False,
-                 force=False, dry_run=False):
+    def download(self, subject, target, verify=False, force=False,
+                 dry_run=False, ignore_existing=False, preserve_key=False):
         """proxy download in boto, guarding overwrites"""
+        results = []
         try:
-            basename = os.path.basename(subject)
-            target = target or basename
+            dl_target = target
+            for subject_key in self.keys(subject, long_key=True):
+                (bucket_name, key_name, key, subject_type) = self.hone_target(subject_key)
 
-            if os.path.isdir(target):
-                target = "/".join([target, basename])
-
-            if os.path.isfile(target) and not force:
-                fmt = "local target file exists (use -f to overwrite): {0}"
-                raise RadulaError(fmt.format(target))
-
-            (bucket_name, key_name, key,
-             subject_type) = self.hone_target(subject)
-
-            must_have(subject_type == Radula.KEY,
-                      "Key not found: {0}", key_name)
-            must_have(key, "Key not found: {0}", key_name)
-
-            logger.debug({
-                "size": key.size,
-                "chunk": self.chunk_size,
-                "threads": self.thread_count,
-            })
-
-            if dry_run:
-                dry_run_msg(
-                    'download', RadulaLib._key_name(key, long_key=True),
-                    "=>", target
-                )
-                return True
-            else:
-                if key.size <= self.chunk_size:
-                    self._single_part_download(key, target)
+                if preserve_key:
+                    local_path = key_name
+                    logger.debug("local_path: %s", local_path )
                 else:
-                    self._multipart_download(key, target)
+                    local_path = os.path.basename(subject_key)
+                target = dl_target or local_path
 
-                if not verify:
-                    return True
+                if os.path.isdir(target):
+                    target = "/".join([target.rstrip(os.sep), local_path])
 
-                return self.verify(target, key)
+                if os.path.isfile(target):
+                    if ignore_existing:
+                        msg = "Skipping Key (exists and -i): {0}"
+                        logger.info(msg.format(target))
+                        continue
+                    if not force:
+                        msg = "local target file exists (use -f to overwrite or -i to skip): {0}"
+                        raise RadulaError(msg.format(target))
+
+
+                must_have(subject_type == Radula.KEY,
+                          "Key not found: {0}", key_name)
+                must_have(key, "Key not found: {0}", key_name)
+
+                logger.debug({
+                    "size": key.size,
+                    "chunk": self.chunk_size,
+                    "threads": self.thread_count,
+                })
+
+                if dry_run:
+                    dry_run_msg(
+                        'download', RadulaLib._key_name(key, long_key=True),
+                        "=>", target
+                    )
+                    results.append(True)
+                else:
+                    mk_local_path(target)
+                    logger.info('Downloading to {0}'.format(target))
+                    if key.size <= self.chunk_size:
+                        self._single_part_download(key, target)
+                    else:
+                        self._multipart_download(key, target)
+
+                    if verify:
+                        results.append(self.verify(target, key))
+                    else:
+                        results.append(True)
 
         except S3ResponseError as e:
-            msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
-            raise RadulaError(msg.format(bucket_name, key_name, e.message))
+            try:
+                msg = "Subject {0} '{1}' raised S3ResponseError. {2}"
+                raise RadulaError(msg.format(bucket_name, key_name, e.message))
+            except NameError:
+                raise RadulaError(e.message)
+        return all(results)
 
     def _single_part_download(self, key, target):
         def progress_callback(a, b):
@@ -1211,9 +1252,14 @@ class RadulaLib(RadulaClient):
     def cat(self, subject, chunk_size=None):
         sys.stdout.write(self._cat(subject, chunk_size))
 
-
     def keys(self, subject, long_key=False):
         """list keys in a bucket with consideration
+        of glob patterns if provided"""
+        for key in self.get_keys(subject, long_key):
+            yield RadulaLib._key_name(key, key.bucket.name, long_key)
+
+    def get_keys(self, subject, long_key=False):
+        """yeild Keys in a bucket with consideration
         of glob patterns if provided"""
         if not getattr(subject, "__iter__", False):
             subject = [subject]
@@ -1225,23 +1271,23 @@ class RadulaLib(RadulaClient):
             if not pattern:
                 logger.debug("?keys strat: %s", "bucket/")
                 for key in bucket:
-                    yield RadulaLib._key_name(key.name, bucket_name, long_key)
+                    yield key
                 return
 
             # treat  path/to/ as path/to/*
             if pattern[-1] == '/':
                 pattern = pattern + '*'
 
-            logger.info("bucket_name: %s", bucket_name)
-            logger.info("pattern: %s", pattern)
-            logger.info("is_glob: %s", is_glob(pattern))
+            logger.debug("bucket_name: %s", bucket_name)
+            logger.debug("pattern: %s", pattern)
+            logger.debug("is_glob: %s", is_glob(pattern))
 
             # user requested `keys {bucket}/prefix*`
             if is_glob(pattern):
                 logger.debug("?keys strat: %s", "bucket/glob")
                 for matching_keys in RadulaLib.__key_buffer(bucket, pattern):
                     for key in matching_keys:
-                        yield RadulaLib._key_name(key, bucket_name, long_key)
+                        yield bucket.get_key(key)
                 return
             else:
                 logger.debug("?keys strat: %s",  "bucket/key")
@@ -1251,7 +1297,7 @@ class RadulaLib(RadulaClient):
                 key = bucket.get_key(pattern)
                 if not key:
                     raise RadulaError("key does not exist: %s" % (pattern,))
-                yield RadulaLib._key_name(key, bucket_name, long_key)
+                yield key
 
     @staticmethod
     def __key_buffer(bucket, pattern, buffer_size=256):
@@ -2093,6 +2139,7 @@ def guess_target_name(source_path, target_key):
         key_name = basename
     elif key_name[-1] == "/":
         key_name = "".join([key_name, basename])
+
     return key_name
 
 
@@ -2158,3 +2205,18 @@ def is_glob(subject):
 
 def stderr_msg(msg):
     print >> sys.stderr, msg
+
+
+def mk_local_path(target):
+    if os.sep not in target:
+        return
+    # sans the basename
+    path_paths = target.split(os.sep)[:-1]
+    if not len(path_paths):
+        return
+    path = os.path.join(*path_paths)
+    try:
+        os.makedirs(path, mode=0755)
+        logger.info("Created directory: %s", path)
+    except OSError:
+        pass

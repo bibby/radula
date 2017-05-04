@@ -12,7 +12,7 @@ from log_match import TestHandler, Matcher
 
 TEST_BUCKET = "tests"
 here = os.path.dirname(os.path.realpath(__file__))
-TEST_FILE = os.path.join(here, "data.txt")
+TEST_FILE = os.path.join(here, "testdata.txt")
 REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 
 
@@ -159,7 +159,7 @@ def up_method(method, test_set):
     assert_true(handler.matches(levelno=logging.INFO))
     msgs = [
         "uploading",
-        "tests.s3.amazonaws.com/data.txt",
+        "tests.s3.amazonaws.com/testdata.txt",
         "Checksum Verified!"
     ]
 
@@ -244,8 +244,9 @@ def dl_method(method, test_set):
     ]
 
     for msg in msgs:
-        errmsg = "Expecting log message containing '{0}'".format(msg)
-        assert_in(msg, out, msg=errmsg)
+        fmt = "Expecting log message containing '{0}'".format(msg)
+        assert_true(handler.matches(message=msg), msg=fmt.format(msg))
+
     target = test_set.get("target", TEST_FILE)
     assert_true(os.path.isfile(target))
     if target != TEST_FILE:
@@ -315,7 +316,7 @@ def key_glob_test():
 
     sys.stdout.truncate(0)
 
-    radu.keys(subject=os.path.join(TEST_BUCKET, 'data*'))
+    radu.keys(subject=os.path.join(TEST_BUCKET, 'testdata*'))
     keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
     for expected_key in expected:
         expected_key = os.path.basename(expected_key)
@@ -687,7 +688,7 @@ def copy_method(method):
 
     msgs = [
         "Finished uploading",
-        "tests.s3.amazonaws.com/data.txt",
+        "tests.s3.amazonaws.com/testdata.txt",
         "Download URL",
         "Key data matches!"
     ]

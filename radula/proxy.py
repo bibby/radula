@@ -66,6 +66,7 @@ class RadulaProxy(object):
         force = kwargs.get("force", False)
         dry_run = kwargs.get("dry_run", False)
         encrypt = kwargs.get("encrypt", None)
+        ignore_existing = kwargs.get("ignore_existing", False)
         if not subject:
             raise RadulaError("Missing file(s) to upload")
         if not target:
@@ -78,7 +79,7 @@ class RadulaProxy(object):
                                                   minimum=RadulaLib.MIN_CHUNK)
         self.lib.upload(subject, target, verify=verify,
                         resume=resume, force=force, dry_run=dry_run,
-                        encrypt=encrypt)
+                        encrypt=encrypt, ignore_existing=ignore_existing)
 
     def get(self, **kwargs):
         """alias of download"""
@@ -95,6 +96,8 @@ class RadulaProxy(object):
         verify = kwargs.get("verify", False)
         force = kwargs.get("force", False)
         dry_run = kwargs.get("dry_run", False)
+        ignore_existing = kwargs.get("ignore_existing", False)
+        preserve_key = kwargs.get("preserve_key", False)
 
         if not subject:
             raise RadulaError("Missing file(s) to download")
@@ -106,8 +109,9 @@ class RadulaProxy(object):
             self.lib.chunk_size = from_human_size(chunk_size,
                                                   minimum=RadulaLib.MIN_CHUNK)
 
-        self.lib.download(subject, target, verify=verify,
-                          force=force, dry_run=dry_run)
+        self.lib.download(subject, target, verify=verify, force=force,
+                          dry_run=dry_run, ignore_existing=ignore_existing,
+                          preserve_key=preserve_key)
 
     def rm(self, **kwargs):
         """alias of remove"""

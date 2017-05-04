@@ -212,6 +212,20 @@ def _parse_args(arg_string=None):
     )
 
     args.add_argument(
+        '-i', '--ignore-existing',
+        dest='ignore_existing',
+        action='store_true',
+        help='Calmly skip existing files; an opposite -f (otherwise errors)'
+    )
+
+    args.add_argument(
+        '-k', '--preserve-key',
+        dest='preserve_key',
+        action='store_true',
+        help='When downloading, preserve paths in keys'
+    )
+
+    args.add_argument(
         'command',
         nargs='?',
         help='command',

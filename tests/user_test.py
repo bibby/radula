@@ -9,7 +9,7 @@ from radula import RadulaProxy, _parse_args, Radula, RadulaError
 
 TEST_BUCKET = "tests"
 here = os.path.dirname(os.path.realpath(__file__))
-TEST_FILE = os.path.join(here, "data.txt")
+TEST_FILE = os.path.join(here, "testdata.txt")
 REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 PRIMARY_USER = 'test-user'
 ALT_USER = 'alt-user'
