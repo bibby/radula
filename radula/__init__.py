@@ -33,7 +33,8 @@ cmd_proxy = [
     'keys', 'ls', 'list',
     'info', 'size', 'etag',
     'remote-md5', 'remote-rehash', 'verify',
-    'sc', 'streaming-copy', 'cat'
+    'sc', 'streaming-copy', 'copy',
+    'cat'
 ]
 
 # commands to perform without a s3 connection
@@ -60,7 +61,7 @@ def _real_main():
         log_level = default_log_level
         if args.log_level:
             if not isinstance(args.log_level, int):
-                level = getattr(logging, args.log_level)
+                level = getattr(logging, str(args.log_level).upper())
                 if isinstance(log_level, int):
                     log_level = level
 
@@ -223,6 +224,13 @@ def _parse_args(arg_string=None):
         dest='preserve_key',
         action='store_true',
         help='When downloading, preserve paths in keys'
+    )
+
+    args.add_argument(
+        '--no-acl',
+        dest='skip_acl_sync',
+        action='store_true',
+        help='When uploading, do not sync key ACL with the bucket ACL. Normally would.'
     )
 
     args.add_argument(

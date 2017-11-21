@@ -12,7 +12,8 @@ from log_match import TestHandler, Matcher
 
 TEST_BUCKET = "tests"
 here = os.path.dirname(os.path.realpath(__file__))
-TEST_FILE = os.path.join(here, "testdata.txt")
+TEST_FILE_NAME = "testdata.txt"
+TEST_FILE = os.path.join(here, TEST_FILE_NAME)
 REMOTE_FILE = os.path.join(TEST_BUCKET, os.path.basename(TEST_FILE))
 
 
@@ -71,7 +72,7 @@ def test_make_bucket():
     radu = RadulaProxy(connection=boto.connect_s3())
     radu.make_bucket(subject=TEST_BUCKET)
     out = sys.stdout.getvalue().strip()
-    assert_equal('Created bucket: tests', out)
+    assert_equal('Created bucket: ' + TEST_BUCKET, out)
 
 
 @mock_s3
@@ -159,7 +160,7 @@ def up_method(method, test_set):
     assert_true(handler.matches(levelno=logging.INFO))
     msgs = [
         "uploading",
-        "tests.s3.amazonaws.com/testdata.txt",
+        TEST_BUCKET + ".s3.amazonaws.com/" + TEST_FILE_NAME,
         "Checksum Verified!"
     ]
 
@@ -668,7 +669,7 @@ def copy_method(method):
     radu = RadulaProxy(connection=boto.connect_s3())
     radu.make_bucket(subject=TEST_BUCKET)
 
-    # give something to download
+    # give something to copy
     args = vars(_parse_args(['up']))
     args.update({
         "subject": TEST_FILE,
@@ -688,7 +689,7 @@ def copy_method(method):
 
     msgs = [
         "Finished uploading",
-        "tests.s3.amazonaws.com/testdata.txt",
+        TEST_BUCKET + ".s3.amazonaws.com/" + TEST_FILE_NAME,
         "Download URL",
         "Key data matches!"
     ]
@@ -705,3 +706,96 @@ def copy_method(method):
     for expected_key in expected:
         expected_key = os.path.basename(expected_key)
         assert_in(expected_key, keys, msg=fmt.format(expected_key))
+
+
+@mock_s3
+def recur_copy_test():
+    handler = TestHandler(Matcher())
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+    radu = RadulaProxy(connection=boto.connect_s3())
+
+    # give something to copy
+    TEST_FILE_2 = TEST_FILE_NAME + '2'
+    SRC_BUCKET = TEST_BUCKET
+    DEST_BUCKET = TEST_BUCKET + '2'
+    radu.make_bucket(subject=SRC_BUCKET)
+    radu.make_bucket(subject=DEST_BUCKET)
+
+
+    REMOTE_FILE = os.path.join(SRC_BUCKET, os.path.basename(TEST_FILE))
+    REMOTE_FILE_2 = os.path.join(SRC_BUCKET, os.path.basename(TEST_FILE_2))
+
+    for dest in [REMOTE_FILE, REMOTE_FILE_2]:
+        args = vars(_parse_args(['up']))
+        args.update({
+            "subject": TEST_FILE,
+            "target": dest
+        })
+        radu.upload(**args)
+        sys.stdout.truncate(0)
+
+    # 'threads' needed
+    args = vars(_parse_args(['sc']))
+    args.update({
+        "subject": SRC_BUCKET + '/',
+        "target": DEST_BUCKET + '/'
+    })
+    radu.streaming_copy(**args)
+
+    msgs = [
+        "Finished uploading",
+        "Download URL: https://%s.s3.amazonaws.com/%s" % (DEST_BUCKET, TEST_FILE_NAME),
+        "Download URL: https://%s.s3.amazonaws.com/%s" % (DEST_BUCKET, TEST_FILE_2),
+    ]
+
+    for msg in msgs:
+        fmt = "Expecting log message containing '{0}'"
+        assert_true(handler.matches(message=msg), msg=fmt.format(msg))
+
+    radu.keys(subject=TEST_BUCKET)
+    keys = [k.strip() for k in sys.stdout.getvalue().strip().split("\n")]
+    expected = [REMOTE_FILE, REMOTE_FILE_2, TEST_FILE, TEST_FILE_2]
+
+    fmt = "Expecting output containing '{0}'"
+    for expected_key in expected:
+        expected_key = os.path.basename(expected_key)
+        assert_in(expected_key, keys, msg=fmt.format(expected_key))
+
+
+@mock_s3
+def __acl_test(opts, test_method):
+    handler = TestHandler(Matcher())
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+
+    radu = RadulaProxy(connection=boto.connect_s3())
+    radu.make_bucket(subject=TEST_BUCKET)
+    sys.stdout.truncate(0)
+
+    test_set = {
+        "subject": TEST_FILE,
+        "target": REMOTE_FILE
+    }
+
+    args = vars(_parse_args(opts))
+    args.update(test_set)
+    getattr(radu, args.get("command"))(**args)
+
+    msgs = [
+        "SKIP ACL Sync"
+    ]
+
+    fmt = "Expecting log message containing '{0}'"
+    for msg in msgs:
+        test_method(
+            handler.matches(message=msg),
+            msg=fmt.format(msg)
+        )
+
+
+def skip_acl_test():
+    __acl_test(["--no-acl", "up"], assert_true)
+
+def no_skip_acl_test():
+    __acl_test(["up"], assert_false)

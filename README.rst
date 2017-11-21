@@ -52,8 +52,8 @@ Configure
 ---------
 
 radula uses *boto*, so all configuration is really `boto
-configuration <http://boto.readthedocs.org/en/latest/s3_tut.html>`__, 
-with some extensions to support streaming copy operations, see the Streaming Copy section below for those custom items. 
+configuration <http://boto.readthedocs.org/en/latest/s3_tut.html>`__,
+with some extensions to support streaming copy operations, see the Streaming Copy section below for those custom items.
 Notable changes are replacing the url to amazon aws with that of one of your gateways.
 Where applicable, you may have to disable SSL as a default option.
 
@@ -91,55 +91,71 @@ to right.
 ::
 
     $ usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-              [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-L LOG_LEVEL]
-              [-n] [-z] [-e]
-              [{acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,
-    put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,info,size,etag,remote-md5,remote-rehash,verif
-    y,sc,streaming-copy,cat,local-md5,profiles}]
+                  [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-L LOG_LEVEL]
+                  [-v] [-n] [-z] [-e] [-A] [-i] [-k] [--no-acl]
+                  [{acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,ls,list,info,size,etag,remote-md5,remote-rehash,verify,sc,streaming-copy,copy,cat,local-md5,profiles}]
                   [subject] [target] ...
-    
+
     RadosGW client
 
     positional arguments:
       {
-        acls,get-acl,set-acl,compare-acl,sync-acl,
-        allow,allow-user,
-        disallow,disallow-user,
-        mb,make-bucket,
-        rb,remove-bucket,
-        lb,list-buckets,
-        put,up,upload,
-        get,dl,download,
-        mpl,mp-list,multipart-list,
-        mpc,mp-clean,multipart-clean,
-        rm,remove,
-        keys,info,size,etag,
-        remote-rehash,verify,remote-md5,local-md5
-        sc,streaming-copy,cat,profiles
-      } command
+        acls, get-acl, set-acl, compare-acl, sync-acl,
+        allow, allow-user,
+        disallow, disallow-user,
+        mb, make-bucket,
+        rb, remove-bucket,
+        lb, list-buckets,
+        put, up, upload,
+        get, dl, download,
+        mpl, mp-list, multipart-list,
+        mpc, mp-clean, multipart-clean,
+        rm, remove,
+        keys, ls, list,
+        info, size, etag,
+        remote-rehash, verify,
+        sc, streaming-copy, copy,
+        cat,
+        remote-md5, local-md5,
+        profiles
+      }
+                            command
       subject               Subject
       target                Target
       remainder             Additional targets for supporting commands. See README
-    
-          optional arguments:
-            -h, --help            show this help message and exit
-            --version             Prints version number
-            -r, --read            During a user grant, permission includes reads
-            -w, --write           During a user grant, permission includes writes
-            -t THREADS, --threads THREADS
-                                  Number of threads to use for uploads. Default=3
-            -p PROFILE, --profile PROFILE
-                                  Boto profile. Overrides AWS_PROFILE environment var
-            -d DESTINATION, --destination DESTINATION
-                                  Destination boto profile, required for streaming copy
-            -f, --force           Overwrite local files without confirmation
-            -y, --verify          Verify uploads after they complete. Uses --threads
-            -c CHUNK_SIZE, --chunk CHUNK_SIZE
-                                  multipart upload chunk size in bytes.
-            -l, --long-keys       prepends bucketname to key results.
-            -n, --dry-run         Print would-be deletions without deleting
-            -z, --resume          Resume uploads if needed.
-            -e, --encrypt         Store content encrypted at rest
+
+    optional arguments:
+      -h, --help            show this help message and exit
+      --version             Prints version number
+      -r, --read            During a user grant, permission includes reads
+      -w, --write           During a user grant, permission includes writes
+      -t THREADS, --threads THREADS
+                            Number of threads to use for uploads. Default=3
+      -p PROFILE, --profile PROFILE
+                            Boto profile. Overrides AWS_PROFILE environment var
+      -d DESTINATION, --destination DESTINATION
+                            Destination boto profile, required for streaming copy
+      -f, --force           Overwrite local files without confirmation
+      -y, --verify          Verify uploads after they complete. Uses --threads.
+                            When passed a destination profile, download and hash
+                            keys on both ends
+      -c CHUNK_SIZE, --chunk CHUNK_SIZE
+                            multipart upload chunk size in bytes.
+      -l, --long-keys       prepends bucketname to key results.
+      -L LOG_LEVEL, --log-level LOG_LEVEL
+                            Log level, [DEBUG, 10, INFO, 20, etc]
+      -v, --verbose         Verbose. Equiv to -L DEBUG
+      -n, --dry-run         Print would-be deletions without deleting
+      -z, --resume          Resume uploads if needed.
+      -e, --encrypt         Store content encrypted at rest
+      -A, --all-buckets     act upon all buckets (info only)
+      -i, --ignore-existing
+                            Calmly skip existing files; an opposite -f (otherwise
+                            errors)
+      -k, --preserve-key    When downloading, preserve paths in keys
+      --no-acl              When uploading, do not sync key ACL with the bucket
+                            ACL. Normally would.
+
 
 
 Examples
@@ -519,6 +535,54 @@ This is known to have issues writing to glusterfs, so `-t 1` is recommended in t
 In ``radula v0.7.1``, default threads was reduced to 3.
 
 As of ``radula v0.7.9``, uploads may include the ``-e,--encrypt`` flag to instruct Rados to store the data encrypted at rest, using its own internal mechanisms. When encrypted data is copied to another cluster, the remote copy should take on this setting without explicitly being told to.
+
+recursive upload/download
+~~~~~~~~~~~~~~~~~
+
+You can upload entire directories with its structure intact. Assume there is a directory such as this:
+
+::
+
+    $ tree projroot/
+    projroot/
+    ├── subdir_a
+    │   ├── ef90d4f2
+    │   └── efd7f715
+    └── subdir_b
+        ├── 10eaf5f0
+        ├── 80920f14
+        ├── a6fcadbf
+        ├── a8dd1085
+        └── third_dir
+            ├── 980a978f
+            └── e50f86fe
+
+Uploading `projroot` will copy the directory structure at the location specified. *Beware: full paths (``/home/user/..``) given as sources will upload to keys using that full path.
+
+::
+
+    $ radula up projroot bucket/projects
+    <snip>
+    $ radula -p abibby keys abibby/projects/\*
+    projects/projroot/subdir_a/ef90d4f2
+    projects/projroot/subdir_a/efd7f715
+    projects/projroot/subdir_b/10eaf5f0
+    projects/projroot/subdir_b/80920f14
+    projects/projroot/subdir_b/a6fcadbf
+    projects/projroot/subdir_b/a8dd1085
+    projects/projroot/subdir_b/third_dir/980a978f
+    projects/projroot/subdir_b/third_dir/e50f86fe
+
+
+Because keys are inherently flat on s3, to download recursively you'll need a combination of a glob pattern and the ``--preserve-key`` flag.
+
+::
+
+    $ radula --preserve-key dl bucket/projects/projroot/
+
+
+The entire key is used to create the local structure, so in this case, the ``projects`` dir will be recreated if it had gone missing.
+
 
 cat
 ~~~

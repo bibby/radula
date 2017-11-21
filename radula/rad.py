@@ -70,11 +70,7 @@ class RadulaClient(object):
         if boto.config.getint('Boto', 'debug', 0) > 0:
             boto.set_stream_logger('boto')
 
-        if connection:
-            self.conn = connection
-
-        if not self.conn:
-            self.conn = self.new_connection(profile)
+        self.conn = connection or self.new_connection(profile)
         return self.conn
 
     def new_connection(self, profile=None, **kwargs):
@@ -112,6 +108,17 @@ class RadulaClient(object):
                 if boto.config.has_option(profile_name, 'encrypt_keys'):
                     self.encrypt_keys = boto.config.getbool(profile_name, 'encrypt_keys')
                     logger.info("Encrypt option set in profile: " + str(self.encrypt_keys))
+                for prop in ('aws_access_key_id', 'aws_secret_access_key'):
+                    aws_val = boto.config.get(profile_name, prop, None)
+                    if aws_val:
+                        args[prop] = aws_val
+                    else:
+                        logger.warn(
+                            "Profile %s lacks value for '%s'. ENV var %s will be used if present.",
+                            profile,
+                            prop,
+                            prop.upper()
+                        )
         else:
             """ not using a profile, check if port is set,
             because boto doesnt check"""
@@ -130,7 +137,6 @@ class RadulaClient(object):
                 mod = __import__(kmod, fromlist=[klass])
                 calling_format = getattr(mod, klass)
 
-
         logger.debug("Calling format: %s", calling_format)
         conn = boto.connect_s3(
             calling_format=calling_format(),
@@ -142,15 +148,16 @@ class RadulaClient(object):
             boto.config.set('Boto', 'is_secure', secure)
         return conn
 
-    def hone_target(self, target):
+    def hone_target(self, target, conn=None):
+        conn = conn or self.conn
         bucket, key = Radula.split_bucket(target)
         target_type = Radula.BUCKET
         false_bucket = False
 
         try:
-            target = self.conn.get_bucket(bucket)
+            target = conn.get_bucket(bucket)
         except S3ResponseError:
-            target = self.conn.get_bucket(bucket, validate=False)
+            target = conn.get_bucket(bucket, validate=False)
             false_bucket = True
             pass
 
@@ -364,7 +371,7 @@ class Radula(RadulaClient):
                     key_policy and
                     bucket_policy and
                     key_policy.owner.id != bucket_policy.owner.id):
-                        key = self.chown(key)
+                        key = self.__key_chown(key)
 
             msg = "Setting bucket's ACL on {0}".format(key.name)
             if dry_run:
@@ -373,7 +380,7 @@ class Radula(RadulaClient):
                 print msg
                 key.set_acl(bucket_policy)
 
-    def chown(self, key):
+    def __key_chown(self, key):
         logger.warn("Changing ownership of key {0}".format(key.name))
         lib = RadulaLib(connection=self.conn)
         key_string = os.path.join(key.bucket.name, key.name)
@@ -404,6 +411,7 @@ class Radula(RadulaClient):
         write = kwargs.get("acl_write", None)
         threads = int(kwargs.get("threads", 0)) or Radula.DEFAULT_THREADS
         recurrance = kwargs.get("recurrance", False)
+        chowner = kwargs.get("chowner", None)
         if not any([read, write]):
             read = True
 
@@ -416,6 +424,8 @@ class Radula(RadulaClient):
         if write:
             permissions.append("WRITE")
             permissions.append("WRITE_ACP")
+        if chowner:
+            permissions = ["FULL_CONTROL"]
 
         policy = target.get_acl()
         acl = policy.acl
@@ -629,6 +639,25 @@ class Radula(RadulaClient):
         if not profile_found:
             logger.warning("Selected profile (%s) not found!", selected_profile)
 
+    def chown(self, **kwargs):
+        """set the ACL policy
+        on a subject bucket or key"""
+        subject = kwargs.get("subject", None)
+        must_have(subject, "Subject (bucket/key) is needed")
+        target = kwargs.get("target", None)
+        must_have(target, "A target RadosGW UserName/UserID is needed")
+
+        (bucket_name, key_name, key, subject_type) = self.hone_target(target)
+        must_have(subject_type == Radula.BUCKET, "Subject expected to be a bucket.")
+
+        return self.allow_user(
+            subject=subject,
+            target=target,
+            chowner=subject
+        )
+
+
+        return 'OK'
 
 class RadulaLib(RadulaClient):
     PROGRESS_CHUNKS = 20
@@ -667,7 +696,8 @@ class RadulaLib(RadulaClient):
                 yield key
 
     def upload(self, subject, target, verify=False, resume=False,
-               force=False, dry_run=False, encrypt=None, ignore_existing=False):
+               force=False, dry_run=False, encrypt=None, ignore_existing=False,
+               skip_acl_sync=False):
         """initiate multipart uploads of
         potential plural local subject files"""
         bucket_name, target_key = Radula.split_bucket(target)
@@ -676,7 +706,7 @@ class RadulaLib(RadulaClient):
 
         try:
             bucket = self.conn.get_bucket(bucket_name)
-            files = glob(subject)
+            files = [strip_string(s, "./") for s in glob(subject)]
             file_keys = []
             if len(files) == 0:
                 msg = "No file(s) to upload: used {0}"
@@ -689,7 +719,7 @@ class RadulaLib(RadulaClient):
                     logger.info("is dir: %s", f)
                     for wroot, wdirs, wfiles in os.walk(f):
                         for wf in wfiles:
-                            src_file = os.path.join(wroot, wf)
+                            src_file = strip_string(os.path.join(wroot, wf), "./")
                             tgt_file = os.path.join(target_key or '', guess_target_name(wf, src_file))
                             file_keys.append(
                                 (src_file, tgt_file,)
@@ -714,7 +744,8 @@ class RadulaLib(RadulaClient):
                         key_name,
                         verify=verify,
                         resume=resume,
-                        encrypt=encrypt)
+                        encrypt=encrypt,
+                        skip_acl_sync=skip_acl_sync)
                     must_have(started, "{0} did not correctly upload",
                               source_path)
         except S3ResponseError as e:
@@ -723,7 +754,7 @@ class RadulaLib(RadulaClient):
 
     def _start_upload(self, source, bucket, key_name, verify=False,
                       resume=False, copy_from_key=False, dest_conn=None,
-                      encrypt=None):
+                      encrypt=None, skip_acl_sync=None):
         if copy_from_key:
             source_name = source
             source_size = source.size
@@ -735,7 +766,7 @@ class RadulaLib(RadulaClient):
             strategy = RadulaChunkStrategy.DEFAULT
             num_parts, chunk_size = self.calculate_chunks(source_size, strategy)
 
-        logger.info("CHUNKS: %d parts x %s", num_parts, human_size(chunk_size))
+        logger.info("CHUNKS: %d parts x %s", num_parts, human_size(chunk_size or 0))
 
         generate_hashes = strategy == RadulaChunkStrategy.LEGACY
 
@@ -755,7 +786,8 @@ class RadulaLib(RadulaClient):
                 source_size=source_size,
                 metadata=metadata,
                 generate_hashes=generate_hashes,
-                encrypt=encrypt)
+                encrypt=encrypt,
+                skip_acl_sync=skip_acl_sync)
 
             hashes = [part_hash]
 
@@ -773,7 +805,8 @@ class RadulaLib(RadulaClient):
                     metadata=metadata,
                     resume=resume,
                     generate_hashes=generate_hashes,
-                    encrypt=encrypt)
+                    encrypt=encrypt,
+                    skip_acl_sync=skip_acl_sync)
             except:
                 logger.error("Error during upload or cancelling upload",
                              exc_info=True)
@@ -789,7 +822,7 @@ class RadulaLib(RadulaClient):
     def _single_part_upload(self, source, key_name, bucket,
                             copy_from_key=False, source_size=0,
                             metadata=None, generate_hashes=False,
-                            encrypt=None):
+                            encrypt=None, skip_acl_sync=None):
         t1 = time.time()
         part_hash = None
 
@@ -815,7 +848,8 @@ class RadulaLib(RadulaClient):
         t2 = time.time() - t1
 
         key = bucket.get_key(key_name)
-        self.sync_acl(key, bucket)
+        self.sync_acl(key, bucket, skip_acl_sync)
+
         print_timings(source_size, t2, "uploading")
         print_url(key)
         return key, part_hash
@@ -825,7 +859,7 @@ class RadulaLib(RadulaClient):
                            chunk_size=0, dest_conn=None,
                            metadata=None, resume=False,
                            generate_hashes=False,
-                           encrypt=None):
+                           encrypt=None, skip_acl_sync=None):
         """multipart upload strategy.
         Borrowed heavily from the work of David Arthur
         https://github.com/mumrah/s3-multipart
@@ -880,7 +914,8 @@ class RadulaLib(RadulaClient):
             raise
 
         key = bucket.get_key(key_name)
-        self.sync_acl(key, bucket)
+        self.sync_acl(key, bucket, skip_acl_sync)
+
         print_timings(source_size, pool.get_timing(), "uploading")
         print_url(key)
         hashes = None
@@ -980,6 +1015,7 @@ class RadulaLib(RadulaClient):
     def assert_missing_target(self, bucket, key_names, ignore_existing=False):
         return_keys = []
         for fname, key_name in key_names:
+            logger.debug('assert_missing_target: ' + key_name)
             key = bucket.get_key(key_name)
             if key:
                 if ignore_existing:
@@ -996,6 +1032,7 @@ class RadulaLib(RadulaClient):
     def assert_missing_mpu(self, bucket, key_names, force=None):
         """when force is True and a mpu exists, clear it"""
         for (fname, key_name) in key_names:
+            logger.debug('assert_missing_mpu: ' + key_name)
             mpu = self.find_multipart_upload("/".join([bucket.name, key_name]))
             if mpu:
                 if force:
@@ -1007,7 +1044,12 @@ class RadulaLib(RadulaClient):
                     raise RadulaError(msg.format(bucket.name, key_name))
 
     @staticmethod
-    def sync_acl(key, bucket):
+    def sync_acl(key, bucket, skip_sync=False):
+        if skip_sync:
+            logger.info('SKIP ACL Sync (--no-acl) for %s' % (key.name,))
+            return
+
+        logger.debug('SYNC key ACL to bucket ACL: %s' % (key.name,))
         bucket_policy = bucket.get_acl()
         bucket_owner = bucket_policy.owner.id
         key_policy = key.get_acl()
@@ -1650,15 +1692,10 @@ class RadulaLib(RadulaClient):
 
     def streaming_copy(self, source, destination, dest_profile=None,
                        force=False, verify=False, resume=False, dry_run=False,
-                       encrypt=None):
+                       encrypt=None, ignore_existing=False, skip_acl_sync=None):
         """initiate streaming copy between two keys"""
         if encrypt is None:
             encrypt = self.encrypt_keys
-        source_bucket_name, source_key_name = Radula.split_bucket(source)
-        source_bucket = self.conn.get_bucket(source_bucket_name)
-        source_key = source_bucket.get_key(source_key_name)
-        if source_key is None:
-            raise RadulaError("source key does not exist")
 
         if dest_profile is not None:
             if dest_profile == 'Default':
@@ -1668,34 +1705,77 @@ class RadulaLib(RadulaClient):
         else:
             dest_conn = self.conn
 
-        dest_bucket_name, dest_key_name = Radula.split_bucket(destination)
-        dest_key_name = guess_target_name(source, dest_key_name)
+        subject_keys = self.keys(source)
 
-        dest_bucket = dest_conn.get_bucket(dest_bucket_name, validate=False)
-        dest_key = dest_bucket.get_key(dest_key_name)
-        if dest_key is not None and not force:
-            raise RadulaError("dest key exists (use -f to overwrite)")
+        (dest_bucket_name, dest_key_name, dest_subject,
+         dest_subject_type) = self.hone_target(destination, conn=dest_conn)
 
-        if dry_run:
-            dry_run_msg(
-                'download', RadulaLib._key_name(source_key, long_key=True),
-                "=>", RadulaLib._key_name(dest_key, long_key=True),
-            )
-        else:
-            started = self._start_upload(
-                source_key,
-                dest_bucket,
-                dest_key_name,
-                verify=verify,
-                resume=resume,
-                copy_from_key=True,
-                dest_conn=dest_conn,
-                encrypt=encrypt)
+        dest_bucket = dest_conn.get_bucket(dest_bucket_name)
+        src_bucket = None
 
-            must_have(started,
-                      "{0} did not correctly upload", source)
+        source_keys = Lookahead(self.keys(source, long_key=True))
+        has_multiple_files = source_keys.lookahead(1) is not None
+        logger.debug("has_multiple_files: %s", has_multiple_files)
 
-        return dest_key
+        for subject_key in source_keys:
+            logger.info("Copy: %s", subject_key)
+            (source_bucket_name, source_key_name,
+             source_key, source_subject_type) = self.hone_target(subject_key)
+            bucket_key = os.path.join(source_bucket_name, source_key_name)
+
+            final_dest_key = dest_key_name
+            if dest_subject_type == Radula.BUCKET:
+                logger.debug("dest is a bucket")
+                final_dest_key = source_key_name
+
+            if dest_subject_type == Radula.KEY:
+                logger.debug("dest is a key")
+                if dest_key_name.endswith("/"):
+                    final_dest_key = os.path.join(
+                        dest_key_name.rstrip("/"),
+                        source_key_name
+                    )
+                else:
+                    final_dest_key = dest_key_name
+
+            logger.debug("final_dest_key: %s", final_dest_key)
+
+            dest_keys = [(dest_key_name, final_dest_key)]
+            if not force and not self.assert_missing_target(dest_bucket, dest_keys, ignore_existing):
+                # either a (-i) skip message or a (-f) exception
+                continue
+
+            if dry_run:
+                dry_run_msg(
+                    'download', RadulaLib._key_name(source_key, long_key=True),
+                    "=>", RadulaLib._key_name(final_dest_key, bucket=dest_bucket, long_key=True),
+                )
+            else:
+                logger.info(dict(
+                    verify=verify,
+                    resume=resume,
+                    copy_from_key=True,
+                    dest_conn=dest_conn,
+                    encrypt=encrypt,
+                    skip_acl_sync=skip_acl_sync
+                ))
+                started = self._start_upload(
+                    source_key,
+                    dest_bucket,
+                    final_dest_key,
+                    verify=verify,
+                    resume=resume,
+                    copy_from_key=True,
+                    dest_conn=dest_conn,
+                    encrypt=encrypt,
+                    skip_acl_sync=skip_acl_sync
+                )
+
+                must_have(
+                    started,
+                    "{0} did not correctly upload",
+                    source
+                )
 
     def _remote_chunk_size(self, source):
         remote_mp_info = self.multipart_info(source)
@@ -1719,6 +1799,30 @@ class RadulaLib(RadulaClient):
             logger.info("Attempting to match the source object's LEGACY chunk strategy")
             num_parts, chunk_size = self.calculate_chunks(source.size, strategy=strategy)
             return num_parts, chunk_size, strategy
+
+
+class Lookahead:
+    def __init__(self, iter):
+        self.iter = iter
+        self.buffer = []
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if self.buffer:
+            return self.buffer.pop(0)
+        else:
+            return self.iter.next()
+
+    def lookahead(self, n):
+        """Return an item n entries ahead in the iteration."""
+        while n >= len(self.buffer):
+            try:
+                self.buffer.append(self.iter.next())
+            except StopIteration:
+                return None
+        return self.buffer[n]
 
 
 def human_size(size, precision=2):
@@ -2220,3 +2324,13 @@ def mk_local_path(target):
         logger.info("Created directory: %s", path)
     except OSError:
         pass
+
+
+def strip_string(string, to_strip):
+    """thx! https://stackoverflow.com/a/15870085/4529725"""
+    if to_strip:
+        while string.startswith(to_strip):
+            string = string[len(to_strip):]
+        while string.endswith(to_strip):
+            string = string[:-len(to_strip)]
+    return string

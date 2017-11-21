@@ -66,6 +66,7 @@ class RadulaProxy(object):
         force = kwargs.get("force", False)
         dry_run = kwargs.get("dry_run", False)
         encrypt = kwargs.get("encrypt", None)
+        skip_acl_sync = kwargs.get("skip_acl_sync", False)
         ignore_existing = kwargs.get("ignore_existing", False)
         if not subject:
             raise RadulaError("Missing file(s) to upload")
@@ -79,7 +80,8 @@ class RadulaProxy(object):
                                                   minimum=RadulaLib.MIN_CHUNK)
         self.lib.upload(subject, target, verify=verify,
                         resume=resume, force=force, dry_run=dry_run,
-                        encrypt=encrypt, ignore_existing=ignore_existing)
+                        encrypt=encrypt, ignore_existing=ignore_existing,
+                        skip_acl_sync=skip_acl_sync)
 
     def get(self, **kwargs):
         """alias of download"""
@@ -321,6 +323,10 @@ class RadulaProxy(object):
         """alias of streaming-copy"""
         return self.streaming_copy(**kwargs)
 
+    def copy(self, **kwargs):
+        """alias of streaming-copy"""
+        return self.streaming_copy(**kwargs)
+
     def streaming_copy(self, **kwargs):
         """copy from one endpoint to another without touching a disk"""
         source = kwargs.get("subject", None)
@@ -330,6 +336,8 @@ class RadulaProxy(object):
         verify = kwargs.get("verify", False)
         dry_run = kwargs.get("dry_run", False)
         encrypt = kwargs.get("encrypt", None)
+        skip_acl_sync = kwargs.get("skip_acl_sync", False)
+        ignore_existing = kwargs.get("ignore_existing", False)
         if not source:
             raise RadulaError("missing source bucket/key")
         if not dest:
@@ -347,7 +355,9 @@ class RadulaProxy(object):
                                 force=force,
                                 verify=verify,
                                 dry_run=dry_run,
-                                encrypt=encrypt)
+                                encrypt=encrypt,
+                                ignore_existing=ignore_existing,
+                                skip_acl_sync=skip_acl_sync)
 
     def cat(self, **kwargs):
         source = kwargs.get("subject", None)
