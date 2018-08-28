@@ -95,6 +95,16 @@ class RadulaClient(object):
                     logger.debug("profile %s uses host %s",
                                  profile_name, host)
                     args['host'] = host
+                proxy = boto.config.get(profile_name, 'proxy', None)
+                if proxy:
+                    logger.debug("profile %s uses proxy %s",
+                                 profile_name, proxy)
+                    args['proxy'] = proxy
+                proxy_port = boto.config.get(profile_name, 'proxy_port', None)
+                if proxy_port:
+                    logger.debug("profile %s uses proxy_port %s",
+                                 profile_name, proxy_port)
+                    args['proxy_port'] = proxy_port
                 if boto.config.has_option(profile_name, 'is_secure'):
                     secure = boto.config.getbool(profile_name, 'is_secure',
                                                  'True')
@@ -1073,6 +1083,8 @@ class RadulaLib(RadulaClient):
                  dry_run=False, ignore_existing=False, preserve_key=False):
         """proxy download in boto, guarding overwrites"""
         results = []
+        bucket_name = None
+        key_name = None
         try:
             dl_target = target
             for subject_key in self.keys(subject, long_key=True):
@@ -1080,13 +1092,18 @@ class RadulaLib(RadulaClient):
 
                 if preserve_key:
                     local_path = key_name
-                    logger.debug("local_path: %s", local_path )
+                    logger.debug("local_path: %s", local_path)
                 else:
                     local_path = os.path.basename(subject_key)
                 target = dl_target or local_path
 
-                if os.path.isdir(target):
-                    target = "/".join([target.rstrip(os.sep), local_path])
+                logger.debug('local_path = ' + str(local_path))
+                logger.debug('dl_target = ' + str(dl_target))
+                logger.debug('target = ' + str(target))
+                logger.debug('is_dir = ' + str(os.path.isdir(target)))
+
+                if os.path.isdir(target) or target.endswith(os.sep):
+                    target = str(os.sep).join([target.rstrip(os.sep), local_path])
 
                 if os.path.isfile(target):
                     if ignore_existing:
@@ -1096,7 +1113,6 @@ class RadulaLib(RadulaClient):
                     if not force:
                         msg = "local target file exists (use -f to overwrite or -i to skip): {0}"
                         raise RadulaError(msg.format(target))
-
 
                 must_have(subject_type == Radula.KEY,
                           "Key not found: {0}", key_name)
@@ -1143,6 +1159,7 @@ class RadulaLib(RadulaClient):
             logger.info("Download Progress: %.2f%%" % percentage)
 
         t1 = time.time()
+        logger.debug('contents_to: ' + str(target))
         key.get_contents_to_filename(target, cb=progress_callback,
                                      num_cb=self.PROGRESS_CHUNKS)
         t2 = time.time()
@@ -1447,12 +1464,12 @@ class RadulaLib(RadulaClient):
 
         logger.debug({
             "size": key.size,
-            "chunk": self.chunk_size,
+            "chunk": chunk_size,
             "threads": self.thread_count,
         })
 
         try:
-            if key.size <= self.chunk_size:
+            if key.size <= chunk_size:
                 hex_digest = self._single_part_rehash(key)
             else:
                 hex_digest = self._multipart_rehash(key, num_parts, chunk_size)
@@ -2312,14 +2329,18 @@ def stderr_msg(msg):
 
 
 def mk_local_path(target):
+    logger.debug('mk_local_path: ' + target)
     if os.sep not in target:
         return
     # sans the basename
     path_paths = target.split(os.sep)[:-1]
+    logger.debug('path_paths: ' + str(path_paths))
     if not len(path_paths):
         return
-    path = os.path.join(*path_paths)
+    path = os.sep.join(path_paths)
+
     try:
+        logger.debug('os.makedirs: ' + str(path))
         os.makedirs(path, mode=0755)
         logger.info("Created directory: %s", path)
     except OSError:

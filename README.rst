@@ -78,6 +78,14 @@ To add your personal credentials, fill in the following in ``~/.boto``:
     aws_access_key_id = wxyz...
     aws_secret_access_key = 9765432...
 
+The configuration file can be read from different paths. This is
+determined by the boto library, and the order of paths that are checked is:
+
+1. The path specified by the  ``BOTO_CONFIG`` environment variable.
+2. The file ``~/.boto``
+3. The file ``~/.aws/credentials``
+4. The file ``/etc/boto.cfg``
+
 Usage
 -----
 

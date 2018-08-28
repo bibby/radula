@@ -203,16 +203,31 @@ def dl_method_fail(method, test_set):
 
 
 def test_download_file():
-    methods = ["dl", "get", "download"]
+    methods = ['dl', 'get', 'download']
     test_sets = [
-        {"subject": REMOTE_FILE,
-         "target": TEST_FILE + "2"},
-        {"subject": REMOTE_FILE}
+        {'subject': REMOTE_FILE,
+         'target': TEST_FILE + '2'},
+        {'subject': REMOTE_FILE},
+        {'subject': REMOTE_FILE,
+         'target': '/tmp/rad/' + os.path.basename(TEST_FILE) + '2'},
+        {'subject': REMOTE_FILE,
+         'target': 'tmp-rad/to/' + os.path.basename(TEST_FILE) + '2'},
+        {'subject': REMOTE_FILE,
+         'target': '/tmp/rad/',
+         'expect': '/tmp/rad/' + os.path.basename(TEST_FILE),
+        },
+        {'subject': REMOTE_FILE,
+         'target': 'tmp-rad/to/',
+         'expect': 'tmp-rad/to/' + os.path.basename(TEST_FILE),
+        },
     ]
 
     for method in methods:
         for test_set in test_sets:
             yield dl_method, method, test_set
+            for d in ['tmp-rad/to', 'tmp-rad', '/tmp/rad']:
+                if os.path.isdir(d):
+                    os.rmdir(d)
 
 
 @mock_s3
@@ -249,9 +264,15 @@ def dl_method(method, test_set):
         assert_true(handler.matches(message=msg), msg=fmt.format(msg))
 
     target = test_set.get("target", TEST_FILE)
-    assert_true(os.path.isfile(target))
-    if target != TEST_FILE:
-        os.remove(target)
+    if os.path.isdir(target):
+        target = str(os.sep).join([target.rstrip(os.sep), os.path.basename(TEST_FILE)])
+
+    assert_file = test_set.get('expect', target)
+    logger.debug('PASSES = ' + str(os.path.isfile(assert_file)))
+    logger.debug('EXPECT = ' + str(assert_file))
+    assert_true(os.path.isfile(assert_file))
+    if assert_file != TEST_FILE:
+        os.remove(assert_file)
 
 
 @mock_s3
@@ -328,6 +349,7 @@ def key_glob_test():
         len(keys),
         "Expected to have %d keys, got %d" % (keys_added, len(keys))
     )
+
 
 @mock_s3
 def key_slash_test():
@@ -722,7 +744,6 @@ def recur_copy_test():
     radu.make_bucket(subject=SRC_BUCKET)
     radu.make_bucket(subject=DEST_BUCKET)
 
-
     REMOTE_FILE = os.path.join(SRC_BUCKET, os.path.basename(TEST_FILE))
     REMOTE_FILE_2 = os.path.join(SRC_BUCKET, os.path.basename(TEST_FILE_2))
 
@@ -796,6 +817,7 @@ def __acl_test(opts, test_method):
 
 def skip_acl_test():
     __acl_test(["--no-acl", "up"], assert_true)
+
 
 def no_skip_acl_test():
     __acl_test(["up"], assert_false)
