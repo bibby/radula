@@ -34,7 +34,8 @@ cmd_proxy = [
     'info', 'size', 'etag',
     'remote-md5', 'remote-rehash', 'verify',
     'sc', 'streaming-copy', 'copy',
-    'cat'
+    'cat',
+    'url', 'get-url',
 ]
 
 # commands to perform without a s3 connection

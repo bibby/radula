@@ -1038,7 +1038,6 @@ class RadulaLib(RadulaClient):
             return_keys.append((fname, key_name))
         return return_keys
 
-
     def assert_missing_mpu(self, bucket, key_names, force=None):
         """when force is True and a mpu exists, clear it"""
         for (fname, key_name) in key_names:
@@ -1383,6 +1382,10 @@ class RadulaLib(RadulaClient):
             return os.path.join(bucket, key)
         return key
 
+    def key_info(self, key, bucket_name):
+        key.bucket = bucket_name
+        return vars(key)
+
     def info(self, subject):
         """fetch metadata of a remote subject key"""
         bucket_name, key_name = Radula.split_bucket(subject)
@@ -1391,8 +1394,7 @@ class RadulaLib(RadulaClient):
         if key_name:
             key = bucket.get_key(key_name)
             must_have(key, "Key not found: {0}", key_name)
-            key.bucket = bucket_name
-            return vars(key)
+            return self.key_info(key, bucket_name)
 
         total_size = 0
         object_count = 0
@@ -1816,6 +1818,16 @@ class RadulaLib(RadulaClient):
             logger.info("Attempting to match the source object's LEGACY chunk strategy")
             num_parts, chunk_size = self.calculate_chunks(source.size, strategy=strategy)
             return num_parts, chunk_size, strategy
+
+    def get_url(self, subject, target, **kwargs):
+        urls = []
+        for key in self.get_keys(subject):
+            urls.append(
+                self.conn.generate_url(int(target or 1440), "GET", bucket=key.bucket.name, key=key.name)
+            )
+        if len(urls) == 1:
+            return urls[0]
+        return urls
 
 
 class Lookahead:

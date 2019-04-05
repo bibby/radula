@@ -99,34 +99,19 @@ to right.
 ::
 
     $ usage: radula [-h] [--version] [-r] [-w] [-t THREADS] [-p PROFILE]
-                  [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-L LOG_LEVEL]
-                  [-v] [-n] [-z] [-e] [-A] [-i] [-k] [--no-acl]
-                  [{acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,ls,list,info,size,etag,remote-md5,remote-rehash,verify,sc,streaming-copy,copy,cat,local-md5,profiles}]
+              [-d DESTINATION] [-f] [-y] [-c CHUNK_SIZE] [-l] [-L LOG_LEVEL]
+              [-v] [-n] [-z] [-e] [-A] [-i] [-k] [--no-acl]
+              [{acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,
+    up,upload,get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,ls,list,info,size,etag,remote-md5,remote-rehash,verif
+    y,sc,streaming-copy,copy,cat,url,get-url,local-md5,profiles}]
                   [subject] [target] ...
 
     RadosGW client
 
     positional arguments:
-      {
-        acls, get-acl, set-acl, compare-acl, sync-acl,
-        allow, allow-user,
-        disallow, disallow-user,
-        mb, make-bucket,
-        rb, remove-bucket,
-        lb, list-buckets,
-        put, up, upload,
-        get, dl, download,
-        mpl, mp-list, multipart-list,
-        mpc, mp-clean, multipart-clean,
-        rm, remove,
-        keys, ls, list,
-        info, size, etag,
-        remote-rehash, verify,
-        sc, streaming-copy, copy,
-        cat,
-        remote-md5, local-md5,
-        profiles
-      }
+      {acls,get-acl,set-acl,compare-acl,sync-acl,allow,allow-user,disallow,disallow-user,mb,make-bucket,rb,remove-bucket,lb,list-buckets,put,up,upload,
+      get,dl,download,mpl,mp-list,multipart-list,mpc,mp-clean,multipart-clean,rm,remove,keys,ls,list,info,size,etag,remote-md5,remote-rehash,verify,sc,
+      streaming-copy,copy,cat,url,get-url,local-md5,profiles}
                             command
       subject               Subject
       target                Target
@@ -656,6 +641,26 @@ To view raw metadata about a remote target, use ``info [remote_file]``.
 The output will contain the etag and other data in JSON format.
 For quick access to size and hash data, commands ``etag`` and ``size``
 are available to provide this data from the larger ``info`` set.
+
+signed urls
+~~~~~~~~~~~
+
+Signed URLs can permit the download of private objects for a limited time. The command ``get-url`` (alias ```url``)
+can generate these for one or more objects. The first argument is the remote path, which may use globs, and the optional
+second argument is an integer representing the minutes until the URL expires. Omitting the second argument will produce
+a URL that expires in one day.
+
+::
+
+    # one file with default expire
+    [bibby@machine ~]$  radula get-url bibby/foo
+    https://s3-host/bibby/foo?Signature={signature}&Expires={expire}&AWSAccessKeyId={access_key}
+
+    # many files with 15 min custom expire
+    [bibby@machine ~]$  radula get-url bibby/foo* 15
+    https://s3-host/bibby/foo?Signature={signature}&Expires={expire}&AWSAccessKeyId={access_key}
+    https://s3-host/bibby/foo_2?Signature={signature}&Expires={expire}&AWSAccessKeyId={access_key}
+
 
 deletion
 ~~~~~~~~

@@ -815,6 +815,57 @@ def __acl_test(opts, test_method):
         )
 
 
+def url_test():
+    methods = ['url', 'get_url']
+    inputs = (
+        (REMOTE_FILE, 10),
+        (REMOTE_FILE, '60'),
+        (REMOTE_FILE, None),
+        (REMOTE_FILE + '*', 10),
+        (REMOTE_FILE + '*', '60'),
+        (REMOTE_FILE + '*', None),
+    )
+    for method in methods:
+        for input in inputs:
+            yield url_method, method, input
+
+
+@mock_s3
+def url_method(method, input):
+    handler = TestHandler(Matcher())
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+    radu = RadulaProxy(connection=boto.connect_s3())
+    radu.make_bucket(subject=TEST_BUCKET)
+
+    # give something to copy
+    args = vars(_parse_args(['up']))
+    args.update({
+        "subject": TEST_FILE,
+        "target": REMOTE_FILE
+    })
+    radu.upload(**args)
+
+    args.update({
+        "subject": TEST_FILE,
+        "target" : REMOTE_FILE + '2'
+    })
+    radu.upload(**args)
+    sys.stdout.truncate(0)
+
+    args.update({
+        "subject": input[0],
+        "target": input[1]
+    })
+
+    getattr(radu, method)(**args)
+
+    fmt = "Expecting log message containing '{0}'"
+    find = '?Signature='
+    out = sys.stdout.getvalue().strip()
+    assert_true(find in out, msg=fmt.format(find))
+
+
 def skip_acl_test():
     __acl_test(["--no-acl", "up"], assert_true)
 

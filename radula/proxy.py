@@ -1,6 +1,7 @@
-from rad import RadulaLib, RadulaError, human_size, from_human_size, Radula
+from rad import RadulaLib, RadulaError, human_size, from_human_size, Radula, is_glob
 from boto.compat import json
 import logging
+import fnmatch
 
 logger = logging.getLogger("radula")
 
@@ -186,17 +187,28 @@ class RadulaProxy(object):
                     "info": self.lib.info(subject_key)
                 })
             else:
-                l = len(actual_keys)
-                for key in self.lib.keys(subject_key, long_key=True):
-                    actual_keys.append(key)
-                if len(actual_keys) == l:
-                    raise RadulaError("Key not found: {0}".format(subject_key))
+                found = len(actual_keys)
+                if is_glob(pattern):
 
-        for subject_key in actual_keys:
-            info.append({
-                "key": subject_key,
-                "info": self.lib.info(subject_key)
-            })
+                    bucket = self.lib.conn.get_bucket(bucket_name)
+
+                    for key in bucket:
+                        if fnmatch.fnmatch(key.name, pattern):
+                            key.owner = key.owner.id
+                            actual_keys.append(key.name)
+                            info.append({
+                                "key": "{}/{}".format(bucket_name, key.name),
+                                "info": self.lib.key_info(key, bucket_name)
+                            })
+                else:
+                    for key in self.lib.keys(subject_key, long_key=True):
+                        actual_keys.append(key)
+                        info.append({
+                            "key": subject_key,
+                            "info": self.lib.info(subject_key)
+                        })
+                if len(actual_keys) == found:
+                    raise RadulaError("Key not found: {0}".format(subject_key))
 
         return info
 
@@ -371,3 +383,15 @@ class RadulaProxy(object):
                                          accept_range=True)
 
         self.lib.cat(source, chunk_size=chunk_size)
+
+    def url(self, **kwargs):
+        return self.get_url(**kwargs)
+
+    def get_url(self, **kwargs):
+        """target being an expire time in minutes"""
+        kwargs["target"] = int(kwargs["target"] or 1440)
+        urls = self.lib.get_url(**kwargs)
+        if isinstance(urls, (str, unicode,)):
+            urls = [urls]
+        for url in urls:
+            print url
